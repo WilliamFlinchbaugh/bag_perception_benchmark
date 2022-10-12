@@ -41,7 +41,8 @@ source install/setup.bash
 
 Build perception benchmark tool,
 ```bash
-cd ~/perception_benchmark_ws/src
+cd ~/perception_benchmark_ws/
+rosdep install -y --from-paths src --ignore-src --rosdistro $ROS_DISTRO
 colcon build 
 source install/setup.bash
 ```
@@ -79,8 +80,7 @@ bazel build waymo_open_dataset/metrics/tools/compute_tracking_metrics_main
 
 ```bash
 bazel-bin/waymo_open_dataset/metrics/tools/compute_tracking_metrics_main \
-/$YOUR_AUTOWARE_PATH/src/universe/autoware/benchmarking/perception_benchmark_tool/benchmarking_result/predictions.bin \
-/$YOUR_AUTOWARE_PATH/src/universe/autoware/benchmarking/perception_benchmark_tool/benchmarking_result/gt.bin
+~/benchmark_result/predictions.bin ~/benchmark_result/gt.bin
 ```
 
 ## Result
