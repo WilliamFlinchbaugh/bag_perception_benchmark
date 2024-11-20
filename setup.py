@@ -26,7 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "benchmark_node = perception_benchmark_tool.benchmark_node:main",
-            "waymo_player_node = perception_benchmark_tool.waymo_player_node:main",
+            "bag_player_node = perception_benchmark_tool.bag_player_node:main",
             "autoware_workflow_runner_node = perception_benchmark_tool.autoware_workflow_runner_node:main",
         ],
     },

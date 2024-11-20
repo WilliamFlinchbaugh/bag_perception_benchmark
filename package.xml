@@ -12,7 +12,7 @@
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
 
-  <exec_depend>autoware_auto_perception_msgs</exec_depend>
+  <exec_depend>autoware_perception_msgs</exec_depend>
   <exec_depend>global_parameter_loader</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>tier4_perception_msgs</exec_depend>

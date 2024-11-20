@@ -10,9 +10,9 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     dataset_path_launch_arg = DeclareLaunchArgument(
-        "dataset_path",
-        default_value=joinPath(os.environ["HOME"], "validation_validation_0000"),
-        description="",
+        "bag_file",
+        default_value=joinPath(os.environ["HOME"], "perception_benchmark_tool", "sample.bag"),
+        description="rosbag file to replay (.db3)",
     )
 
     use_camera_launch_arg = DeclareLaunchArgument(
@@ -27,7 +27,7 @@ def generate_launch_description():
         description="",
     )
 
-    benchmark_frame_launch_arg = DeclareLaunchArgument("benchmark_frame", default_value="base_link")
+    # benchmark_frame_launch_arg = DeclareLaunchArgument("benchmark_frame", default_value="base_link")
 
     launch_file_launch_arg = DeclareLaunchArgument(
         "launch_file",
@@ -37,38 +37,37 @@ def generate_launch_description():
 
     vehicle_model_launch_arg = DeclareLaunchArgument(
         "vehicle_model",
-        default_value="sample_vehicle",
+        default_value="awsim_labs_vehicle",
         description="",
     )
 
     sensor_model_launch_arg = DeclareLaunchArgument(
         "sensor_model",
-        default_value="sample_sensor_kit",
+        default_value="awsim_labs_sensor_kit",
         description="",
     )
 
-    benchmark_node = Node(
-        package="perception_benchmark_tool",
-        name="benchmark_node",
-        executable="benchmark_node",
-        output="screen",
-        parameters=[
-            {
-                "result_path": LaunchConfiguration("result_path"),
-                "benchmark_frame": LaunchConfiguration("benchmark_frame"),
-            }
-        ],
-    )
+    # benchmark_node = Node(
+    #     package="perception_benchmark_tool",
+    #     name="benchmark_node",
+    #     executable="benchmark_node",
+    #     output="screen",
+    #     parameters=[
+    #         {
+    #             "result_path": LaunchConfiguration("result_path"),
+    #             "benchmark_frame": LaunchConfiguration("benchmark_frame"),
+    #         }
+    #     ],
+    # )
 
-    waymo_player_node = Node(
+    bag_player_node = Node(
         package="perception_benchmark_tool",
-        name="waymo_player_node",
-        executable="waymo_player_node",
+        name="bag_player_node",
+        executable="bag_player_node",
         output="screen",
         parameters=[
             {
-                "dataset_path": LaunchConfiguration("dataset_path"),
-                "use_camera": LaunchConfiguration("use_camera"),
+                "bag_file": LaunchConfiguration("bag_file"),
             }
         ],
     )
@@ -91,13 +90,13 @@ def generate_launch_description():
         [
             dataset_path_launch_arg,
             use_camera_launch_arg,
-            benchmark_frame_launch_arg,
+            # benchmark_frame_launch_arg,
             result_path_launch_arg,
             launch_file_launch_arg,
             vehicle_model_launch_arg,
             sensor_model_launch_arg,
-            benchmark_node,
-            waymo_player_node,
+            # benchmark_node,
+            bag_player_node,
             autoware_workflow_runner_node,
         ]
     )

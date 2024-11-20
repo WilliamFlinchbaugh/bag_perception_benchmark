@@ -13,15 +13,15 @@
 # limitations under the License.
 
 import signal
-from subprocess import DEVNULL
-from subprocess import Popen
+from subprocess import Popen, STDOUT, PIPE, DEVNULL
 
-from autoware_auto_perception_msgs.msg import TrackedObjects
+from autoware_perception_msgs.msg import TrackedObjects
 import psutil
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
+import threading
 
 
 class RunnerNode(Node):
@@ -48,6 +48,11 @@ class RunnerNode(Node):
         self.client_read_frame_futures = []
         self.client_read_dataset_frame = self.create_client(Trigger, "send_frame")
         while not self.client_read_dataset_frame.wait_for_service(timeout_sec=3.0):
+            self.get_logger().info("service not available, waiting again...")
+        
+        self.client_reset_dataset_futures = []
+        self.client_reset_dataset = self.create_client(Trigger, "reset_dataset")
+        while not self.client_reset_dataset.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("service not available, waiting again...")
 
         self.sub_segment_finished = self.create_subscription(
@@ -100,9 +105,11 @@ class RunnerNode(Node):
         self.client_read_frame_futures.append(self.client_read_dataset_frame.call_async(req))
 
     def segment_finished_callback(self, ready):
-        self.get_logger().info("Autoware is being killed. ")
-        self.kill_autoware(self.autoware_pid)
-        self.read_dataset_request()
+        # self.get_logger().info("Autoware is being killed. ")
+        # self.kill_autoware(self.autoware_pid)
+        # self.read_dataset_request()
+        req = Trigger.Request()
+        self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
 
     def wait_until_autoware_subs_ready(self):
 
@@ -121,9 +128,24 @@ class RunnerNode(Node):
             + self.vehicle_model
             + " sensor_model:="
             + self.sensor_model
+            + " rviz:=false"
         )
-        launch_process = Popen(cmd, text=False, shell=True, stdout=DEVNULL)
+        self.get_logger().info("Running Autoware with command: " + cmd)
+        launch_process = Popen(cmd, text=False, shell=True, stdout=PIPE)
+        
+        # asynchoronously read the output of the process
+        self.print_thread = threading.Thread(target=self.print_autoware_output, args=(launch_process,))
+        self.print_thread.start()
+        
         return launch_process.pid
+    
+    def print_autoware_output(self, launch_process):
+        while True:
+            output = launch_process.stdout.readline()
+            if output == "" and launch_process.poll() is not None:
+                break
+            if output:
+                self.get_logger().info(output.decode("utf-8"))
 
     def kill_autoware(self, parent_pid, sig=signal.SIGTERM):
         try:
@@ -133,6 +155,10 @@ class RunnerNode(Node):
         children = parent.children(recursive=True)
         for process in children:
             process.send_signal(sig)
+        parent.send_signal(sig)
+        
+        if self.print_thread.is_alive():
+            self.print_thread.join()
 
     def check_lidar_model_ready(self):
         centerpoint_ready = self.count_publishers(
@@ -144,6 +170,7 @@ class RunnerNode(Node):
         return bool(centerpoint_ready or apollo_ready)
 
     def tracked_objects_callback(self, tracked_objects):
+        # self.get_logger().info("Received tracking results: " + str(tracked_objects))
         self.read_frame_request()
 
 

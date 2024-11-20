@@ -14,8 +14,8 @@
 
 import os
 
-from autoware_auto_perception_msgs.msg import ObjectClassification
-from autoware_auto_perception_msgs.msg import TrackedObjects
+from autoware_perception_msgs.msg import ObjectClassification
+from autoware_perception_msgs.msg import TrackedObjects
 from geometry_msgs.msg import PoseStamped
 from message_filters import Subscriber
 from message_filters import TimeSynchronizer
