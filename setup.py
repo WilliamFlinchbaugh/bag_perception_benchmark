@@ -4,7 +4,7 @@ import os
 from setuptools import setup
 from setuptools import find_packages
 
-package_name = "perception_benchmark_tool"
+package_name = "bag_perception_benchmark"
 
 setup(
     name=package_name,
@@ -18,16 +18,16 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="Kaan Colak",
-    maintainer_email="kcolak@leodrive.ai",
-    description="This package benchmark Autoware perception stack on Waymo dataset",
+    maintainer="William Flinchbaugh",
+    maintainer_email="williamflinchbaugh@gmail.com",
+    description="Tool to evaluate the autoware perception stack on recorded rosbag datasets",
     license="Apache License 2.0",
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "benchmark_node = perception_benchmark_tool.benchmark_node:main",
-            "bag_player_node = perception_benchmark_tool.bag_player_node:main",
-            "autoware_workflow_runner_node = perception_benchmark_tool.autoware_workflow_runner_node:main",
+            "benchmark_node = bag_perception_benchmark.benchmark_node:main",
+            "bag_player_node = bag_perception_benchmark.bag_player_node:main",
+            "autoware_workflow_runner_node = bag_perception_benchmark.autoware_workflow_runner_node:main",
         ],
     },
 )

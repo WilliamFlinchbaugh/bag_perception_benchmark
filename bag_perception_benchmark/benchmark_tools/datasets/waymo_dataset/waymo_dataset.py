@@ -14,7 +14,7 @@
 
 import os
 
-from perception_benchmark_tool.benchmark_tools.datasets.waymo_dataset.waymo_decode_data import (
+from bag_perception_benchmark.benchmark_tools.datasets.waymo_dataset.waymo_decode_data import (
     extract_dataset_from_tfrecord,
 )
 

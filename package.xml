@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>perception_benchmark_tool</name>
+  <name>bag_perception_benchmark</name>
   <version>0.0.0</version>
-  <description>This package benchmark Autoware perception stack on Waymo dataset</description>
-  <maintainer email="kcolak@leodrive.ai">Kaan Colak</maintainer>
+  <description>Tool to evaluate the autoware perception stack on recorded rosbag datasets</description>
+  <maintainer email="williamflinchbaugh@gmail.com">William Flinchbaugh</maintainer>
   <license>Apache License 2.0</license>
 
   <test_depend>ament_copyright</test_depend>
