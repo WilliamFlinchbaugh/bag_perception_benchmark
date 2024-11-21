@@ -122,7 +122,7 @@ class RunnerNode(Node):
 
     def run_autoware(self):
         cmd = (
-            "ros2 launch perception_benchmark_tool "
+            "ros2 launch bag_perception_benchmark "
             + self.launch_file
             + " vehicle_model:="
             + self.vehicle_model
@@ -130,7 +130,9 @@ class RunnerNode(Node):
             + self.sensor_model
             + " rviz:=false"
         )
+        
         self.get_logger().info("Running Autoware with command: " + cmd)
+        
         launch_process = Popen(cmd, text=False, shell=True, stdout=PIPE)
         
         # asynchoronously read the output of the process
