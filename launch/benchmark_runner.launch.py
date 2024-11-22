@@ -31,7 +31,7 @@ def generate_launch_description():
 
     launch_file_launch_arg = DeclareLaunchArgument(
         "launch_file",
-        default_value="waymo_perception.launch.xml",
+        default_value="benchmark_perception.launch.xml",
         description="Launch file for testing perception stack",
     )
 
