@@ -63,7 +63,7 @@ replay_topic_list = {
     "/sensing/gnss/pose",
     "/sensing/gnss/pose_with_covariance",
     # "/sensing/imu/tamagawa/imu_raw",
-    "/sensing/lidar/concatenated/pointcloud",
+    # "/sensing/lidar/concatenated/pointcloud",
     "/sensing/lidar/left/pointcloud_raw",
     "/sensing/lidar/left/pointcloud_raw_ex",
     "/sensing/lidar/right/pointcloud_raw",
