@@ -11,7 +11,7 @@ def generate_launch_description():
 
     dataset_path_launch_arg = DeclareLaunchArgument(
         "bag_file",
-        default_value=joinPath(os.environ["HOME"], "perception_benchmark_tool", "sample.bag"),
+        default_value=joinPath(os.environ["HOME"], "bag_perception_benchmark", "sample.bag"),
         description="rosbag file to replay (.db3)",
     )
 
@@ -61,7 +61,7 @@ def generate_launch_description():
     # )
 
     bag_player_node = Node(
-        package="perception_benchmark_tool",
+        package="bag_perception_benchmark",
         name="bag_player_node",
         executable="bag_player_node",
         output="screen",
@@ -73,7 +73,7 @@ def generate_launch_description():
     )
 
     autoware_workflow_runner_node = Node(
-        package="perception_benchmark_tool",
+        package="bag_perception_benchmark",
         name="autoware_workflow_runner_node",
         executable="autoware_workflow_runner_node",
         output="screen",
