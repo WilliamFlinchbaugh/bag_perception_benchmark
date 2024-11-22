@@ -15,7 +15,7 @@
 import signal
 from subprocess import Popen, STDOUT, PIPE, DEVNULL
 
-from autoware_perception_msgs.msg import TrackedObjects
+from autoware_perception_msgs.msg import DetectedObjects
 import psutil
 import rclpy
 from rclpy.node import Node
@@ -23,6 +23,9 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 import threading
 
+capture_topics = {
+    "/perception/object_recognition/detection/centerpoint/objects"
+}
 
 class RunnerNode(Node):
     def __init__(self):
@@ -59,11 +62,10 @@ class RunnerNode(Node):
             Bool, "segment_finished", self.segment_finished_callback, 1
         )
 
-        self.sub_tracking = self.create_subscription(
-            TrackedObjects,
-            "/perception/object_recognition/tracking/objects",
-            self.tracked_objects_callback,
-            10,
+        # setup subscriber to detected objects from centerpoint
+        self.det_objects_frames = []
+        self.sub_det_objects = self.create_subscription(
+            DetectedObjects, "/perception/object_recognition/detection/centerpoint/objects", self.det_objects_callback, 1
         )
 
         self.read_dataset_request()
@@ -105,11 +107,18 @@ class RunnerNode(Node):
         self.client_read_frame_futures.append(self.client_read_dataset_frame.call_async(req))
 
     def segment_finished_callback(self, ready):
-        # self.get_logger().info("Autoware is being killed. ")
-        # self.kill_autoware(self.autoware_pid)
+        self.get_logger().info("Autoware is being killed. ")
+        
+        # save the detected objects to a json file
+        self.save_detected_objects_to_json(self.det_objects_frames)
+        
+        # kill autoware
+        self.kill_autoware(self.autoware_pid)
+        
+        # uncomment to have the dataset reset after each segment
         # self.read_dataset_request()
-        req = Trigger.Request()
-        self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
+        # req = Trigger.Request()
+        # self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
 
     def wait_until_autoware_subs_ready(self):
 
@@ -171,10 +180,21 @@ class RunnerNode(Node):
         )
         return bool(centerpoint_ready or apollo_ready)
 
-    def tracked_objects_callback(self, tracked_objects):
-        # self.get_logger().info("Received tracking results: " + str(tracked_objects))
+    def det_objects_callback(self, det_objects):
+        self.det_objects_frames.append(det_objects)
         self.read_frame_request()
+        
+    def save_detected_objects_to_json(self, det_objects_frames):
+        import json
+        import os
 
+        if not os.path.exists("detected_objects"):
+            os.makedirs("detected_objects")
+
+        # dump the detected objects array to a json file
+        with open("detected_objects/detected_objects.json", "w") as f:
+            json.dump([det_objects.to_msg() for det_objects in det_objects_frames], f)
+        
 
 def main(args=None):
     rclpy.init(args=args)

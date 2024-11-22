@@ -224,7 +224,7 @@ class PlayerNode(Node):
         while self.reader.has_next():
             topic, msg, t = self.reader.read_next()
             if topic == "/sensing/lidar/concatenated/pointcloud":
-                self.publishers_[topic].publish(msg)
+                # self.publishers_[topic].publish(msg)
                 break
             if topic in self.publishers_:
                 self.publishers_[topic].publish(msg)
