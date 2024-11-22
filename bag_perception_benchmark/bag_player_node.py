@@ -48,8 +48,8 @@ import time
 
 replay_topic_list = {
     "/clock",
-    "/tf",
-    "/tf_static",
+    # "/tf",
+    # "/tf_static",
     "/control/command/control_cmd",
     "/control/command/emergency_cmd",
     "/control/command/gear_cmd",
@@ -179,12 +179,12 @@ class PlayerNode(Node):
             self.typestr_to_type[meta_info.name] = locate(meta_info.type.replace("/", "."))
         
         # print all topic names
-        self.get_logger().info(f"Topics found: {list(self.typestr_to_type.keys())}")
+        # self.get_logger().info(f"Topics found: {list(self.typestr_to_type.keys())}")
         
         # add all localization and sensing topics to the replay list
-        for topic, type_ in self.typestr_to_type.items():
-            if "/sensing" in topic or "/localization" in topic:
-                self.replay_topic_list.add(topic)
+        # for topic, type_ in self.typestr_to_type.items():
+        #     if "/sensing" in topic or "/localization" in topic:
+        #         self.replay_topic_list.add(topic)
         
         # filter to only the topics we want to replay
         self.reader.set_filter(StorageFilter(topics=list(self.replay_topic_list)))
@@ -224,7 +224,7 @@ class PlayerNode(Node):
         while self.reader.has_next():
             topic, msg, t = self.reader.read_next()
             if topic == "/sensing/lidar/concatenated/pointcloud":
-                # self.publishers_[topic].publish(msg)
+                self.publishers_[topic].publish(msg)
                 break
             if topic in self.publishers_:
                 self.publishers_[topic].publish(msg)
