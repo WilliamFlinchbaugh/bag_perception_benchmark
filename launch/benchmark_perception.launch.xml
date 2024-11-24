@@ -6,6 +6,8 @@
   <arg name="use_pointcloud_container" default="true" description="launch pointcloud container"/>
   <arg name="pointcloud_container_name" default="pointcloud_container"/>
   <arg name="perception_mode" default="lidar" description="select perception mode. camera_lidar_radar_fusion, camera_lidar_fusion, lidar_radar_fusion, lidar, radar"/>
+  <!-- <arg name="lanelet2_map_file" default="$(env HOME)/autoware_map/nishishinjuku_autoware_map/lanelet2_map.osm" description="lanelet2 map file name"/> -->
+  <!-- <arg name="pointcloud_map_file" default="$(env HOME)/autoware_map/nishishinjuku_autoware_map/pointcloud_map.pcd" description="pointcloud map file name"/> -->
 
   <!-- Optional parameters -->
   <arg name="use_sim_time" default="false" description="use_sim_time"/>
@@ -25,7 +27,6 @@
   <arg name="use_detection_by_tracker" default="true" description="launch detection_by_tracker function"/>
   <arg name="use_radar_tracking_fusion" default="false" description="if true, radar objects are merged in tracking module. Otherwise, radar objects are merged in detection module."/>
   <arg name="use_object_filter" default="true" description="launch object filter to filter-out detected object"/>
-
   <arg name="occupancy_grid_map_method" default="pointcloud_based" description="options: pointcloud_based, laserscan_based, multi_lidar_pointcloud_based"/>
   <arg name="occupancy_grid_map_updater" default="binary_bayes_filter" description="options: binary_bayes_filter"/>
   <arg name="detected_objects_filter_method" default="lanelet_filter" description="options: lanelet_filter, position_filter"/>
@@ -35,6 +36,11 @@
   <arg name="all_traffic_light_camera" default="[camera6, camera7]" description="choose camera which use for traffic light recognition"/>
   <arg name="traffic_light_recognition/enable_fine_detection" default="false" description="enable traffic light fine detection"/>
 
+  <!-- Sensing and Vehicle parameters-->
+  <arg name="launch_sensing_driver" default="false" description="launch sensing driver"/>
+  <arg name="vehicle_id" default="$(env VEHICLE_ID default)" description="vehicle specific ID"/>
+  <arg name="launch_vehicle_interface" default="false"/>
+
   <!-- Global parameters -->
   <group scoped="false">
     <include file="$(find-pkg-share global_parameter_loader)/launch/global_params.launch.py">
@@ -43,8 +49,23 @@
     </include>
   </group>
 
+  <!-- Pointcloud container -->
+  <include file="$(find-pkg-share autoware_launch)/launch/pointcloud_container.launch.py">
+    <arg name="use_multithread" value="true"/>
+    <arg name="container_name" value="$(var pointcloud_container_name)"/>
+  </include>
+
+  <!-- Vehicle -->
+  <include file="$(find-pkg-share tier4_vehicle_launch)/launch/vehicle.launch.xml">
+    <arg name="vehicle_model" value="$(var vehicle_model)"/>
+    <arg name="sensor_model" value="$(var sensor_model)"/>
+    <arg name="vehicle_id" value="$(var vehicle_id)"/>
+    <arg name="launch_vehicle_interface" value="$(var launch_vehicle_interface)"/>
+    <arg name="config_dir" value="$(find-pkg-share individual_params)/config/$(var vehicle_id)/$(var sensor_model)"/>
+    <arg name="raw_vehicle_cmd_converter_param_path" value="$(find-pkg-share autoware_launch)/config/vehicle/raw_vehicle_cmd_converter/raw_vehicle_cmd_converter.param.yaml"/>
+  </include>
+
   <!-- Sensing -->
-  <arg name="launch_sensing_driver" default="true" description="launch sensing driver"/>
   <include file="$(find-pkg-share tier4_sensing_launch)/launch/sensing.launch.xml">
     <arg name="launch_driver" value="$(var launch_sensing_driver)"/>
     <arg name="sensor_model" value="$(var sensor_model)"/>
