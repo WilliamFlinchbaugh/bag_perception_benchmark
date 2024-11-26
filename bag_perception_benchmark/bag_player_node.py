@@ -151,7 +151,11 @@ class PlayerNode(Node):
     
     def reset_dataset(self, request, response):
         self.get_logger().info("Resetting dataset...")
-        self.read_bag()
+        self.reader = self.get_bag_reader()
+        self.frames = self.get_frames_from_reader(self.reader)
+        self.frame_idx = 0
+        self.current_scene_processed = False
+        self.pub_segment_finished.publish(Bool(data=False))
         response.success = True
         response.message = "Dataset reset."
         return response

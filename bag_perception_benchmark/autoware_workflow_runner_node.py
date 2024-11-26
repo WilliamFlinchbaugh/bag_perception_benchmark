@@ -63,7 +63,9 @@ class RunnerNode(Node):
         self.sub_segment_finished = self.create_subscription(
             Bool, "segment_finished", self.segment_finished_callback, 1
         )
-
+        
+        self.outputs_to_save = {}
+        
         # setup subscriber to detected objects from centerpoint
         self.det_objects_frames = []
         self.sub_det_objects = self.create_subscription(
@@ -76,8 +78,6 @@ class RunnerNode(Node):
             EntityStatusWithTrajectoryArray, "/simulation/entity/status", self.gt_objects_callback, 1
         )
         
-        
-
         self.read_dataset_request()
 
     def spin(self):
@@ -120,15 +120,16 @@ class RunnerNode(Node):
         self.get_logger().info("Autoware is being killed. ")
         
         # save the detected objects to a json file
-        self.save_detected_objects_to_json(self.det_objects_frames)
+        self.save_outputs()
         
         # kill autoware
         self.kill_autoware(self.autoware_pid)
         
         # uncomment to have the dataset reset after each segment
-        # self.read_dataset_request()
-        # req = Trigger.Request()
-        # self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
+        req = Trigger.Request()
+        self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
+        
+        self.read_dataset_request()
 
     def wait_until_autoware_subs_ready(self):
 
@@ -199,10 +200,7 @@ class RunnerNode(Node):
     def gt_objects_callback(self, gt_objects):
         self.gt_objects_frames.append(gt_objects)
         
-    def save_detected_objects_to_json(self, det_objects_frames):
-        # with open("detected_objects.json", "w") as f:
-        #     for det_objects in det_objects_frames:
-        #         f.write(det_objects)
+    def save_outputs(self):
         pass
         
 
