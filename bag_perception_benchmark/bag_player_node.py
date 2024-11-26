@@ -122,7 +122,15 @@ class PlayerNode(Node):
         # create the transform broadcaster for the tf and tf_static messages
         self.pose_broadcaster = TransformBroadcaster(self)
         self.static_tf_publisher = StaticTransformBroadcaster(self)
-        self.vector_map_publisher = self.create_publisher(self.typestr_to_type["/map/vector_map"], "/map/vector_map", 1)
+        
+        # create the vector map publisher (make sure to set the QoS profile)
+        qos_profile = QoSProfile(
+            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
+            depth=rclpy.qos.HistoryPolicy.KEEP_LAST,
+            durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL,
+            liveliness=rclpy.qos.LivelinessPolicy.AUTOMATIC
+        )
+        self.vector_map_publisher = self.create_publisher(self.typestr_to_type["/map/vector_map"], "/map/vector_map", qos_profile)
 
     def get_bag_reader(self):
         self.get_logger().info("Reading bag file...")
