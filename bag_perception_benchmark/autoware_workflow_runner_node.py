@@ -14,14 +14,16 @@
 
 import signal
 from subprocess import Popen, STDOUT, PIPE, DEVNULL
-
 from autoware_perception_msgs.msg import DetectedObjects
+import rclpy.qos
+from sensor_msgs.msg import PointCloud2
 import psutil
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 import threading
+from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
 
 capture_topics = {
     "/perception/object_recognition/detection/centerpoint/objects"
@@ -67,6 +69,14 @@ class RunnerNode(Node):
         self.sub_det_objects = self.create_subscription(
             DetectedObjects, "/perception/object_recognition/detection/centerpoint/objects", self.det_objects_callback, 1
         )
+        
+        # setup subscriber to ground truth objects
+        self.gt_objects_frames = []
+        self.sub_gt_objects = self.create_subscription(
+            EntityStatusWithTrajectoryArray, "/simulation/entity/status", self.gt_objects_callback, 1
+        )
+        
+        
 
         self.read_dataset_request()
 
@@ -181,19 +191,19 @@ class RunnerNode(Node):
         return bool(centerpoint_ready or apollo_ready)
 
     def det_objects_callback(self, det_objects):
-        self.det_objects_frames.append(det_objects)
+        # num_objects = len(det_objects.objects)
+        # self.get_logger().info(f"Receieved object detection")
+        # self.det_objects_frames.append(det_objects)
         self.read_frame_request()
         
+    def gt_objects_callback(self, gt_objects):
+        self.gt_objects_frames.append(gt_objects)
+        
     def save_detected_objects_to_json(self, det_objects_frames):
-        import json
-        import os
-
-        if not os.path.exists("detected_objects"):
-            os.makedirs("detected_objects")
-
-        # dump the detected objects array to a json file
-        with open("detected_objects/detected_objects.json", "w") as f:
-            json.dump([det_objects.to_msg() for det_objects in det_objects_frames], f)
+        # with open("detected_objects.json", "w") as f:
+        #     for det_objects in det_objects_frames:
+        #         f.write(det_objects)
+        pass
         
 
 def main(args=None):

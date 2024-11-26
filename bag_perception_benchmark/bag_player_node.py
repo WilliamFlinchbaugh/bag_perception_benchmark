@@ -19,96 +19,89 @@ from autoware_perception_msgs.msg import Shape
 from autoware_perception_msgs.msg import TrackedObject
 from autoware_perception_msgs.msg import TrackedObjects
 from geometry_msgs.msg import TransformStamped
-# from .benchmark_tools.math_utils import rotation_matrix_to_euler_angles
-# from .benchmark_tools.ros_utils import create_camera_info
-# from .benchmark_tools.ros_utils import create_image_msgs
-# from .benchmark_tools.ros_utils import create_point_cloud_mgs
-# from .benchmark_tools.ros_utils import make_transform_stamped
+from .benchmark_tools.math_utils import compose_transforms
+from .benchmark_tools.ros_utils import make_transform_stamped
 import rclpy
-# from rclpy.clock import ClockType
+from rclpy.time import Time
+from rclpy.clock import ClockType
 from rclpy.node import Node
-# from rclpy.time import Time
-# from rclpy.qos import QoSProfile
-# from sensor_msgs.msg import CameraInfo
-# from sensor_msgs.msg import Image
-# from sensor_msgs.msg import PointCloud2
-# from sensor_msgs.msg import PointField
+from rclpy.qos import QoSProfile
+from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointField
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-# import tf_transformations
+import tf_transformations
 # from unique_identifier_msgs.msg import UUID
 from rosbag2_py import SequentialReader, StorageOptions, ConverterOptions, StorageFilter
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from pydoc import locate
-from std_msgs.msg import String
-import time
+from std_msgs.msg import String, Header
+from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Transform
+from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Vector3
+from ament_index_python.packages import get_package_share_directory
+import yaml
+from tf2_msgs.msg import TFMessage
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+import bisect
 
-replay_topic_list = {
-    "/clock",
-    # "/tf",
-    # "/tf_static",
-    "/control/command/control_cmd",
-    "/control/command/emergency_cmd",
-    "/control/command/gear_cmd",
-    "/control/command/hazard_lights_cmd",
-    "/control/command/turn_indicators_cmd",
-    "/initialpose",
-    "/initialpose3d",
-    # "/perception/traffic_light_recognition/external/traffic_signals",
-    # "/sensing/camera/traffic_light/camera_info",
-    # "/sensing/camera/traffic_light/image_raw",
-    "/sensing/gnss/pose",
-    "/sensing/gnss/pose_with_covariance",
-    # "/sensing/imu/tamagawa/imu_raw",
-    # "/sensing/lidar/concatenated/pointcloud",
-    "/sensing/lidar/left/pointcloud_raw",
+
+topic_filter_list = {
+    "/sensing/imu/tamagawa/imu_raw",
     "/sensing/lidar/left/pointcloud_raw_ex",
-    "/sensing/lidar/right/pointcloud_raw",
     "/sensing/lidar/right/pointcloud_raw_ex",
-    "/sensing/lidar/top/pointcloud_raw",
     "/sensing/lidar/top/pointcloud_raw_ex",
-    "/vehicle/status/control_mode",
-    "/vehicle/status/gear_status",
-    "/vehicle/status/hazard_lights_status",
-    "/vehicle/status/steering_status",
-    "/vehicle/status/turn_indicators_status",
-    "/vehicle/status/velocity_status",
-    "/map/pointcloud_map",
+    "/sensing/vehicle_velocity_converter/twist_with_covariance",
+    "/sensing/imu/imu_data",
     "/map/vector_map",
-    "/map/vector_map_marker",
-    "/localization/kinematic_state",
-    "/localization/pose_estimator/pose_with_covariance",
-    "/localization/twist_estimator/twist_with_covariance"
+    "/tf"
 }
 
-def get_tfrecord_paths(path):
-    tf_record_list = glob(path + "/*.tfrecord")
-    if len(tf_record_list) > 0:
-        return tf_record_list
-    else:
-        return None
+replay_topic_list = {x for x in topic_filter_list if "tf" not in x and "vector_map" not in x}
 
+import_topic_list = {
+    "/sensing/lidar/left/pointcloud_raw_ex",
+    "/sensing/lidar/right/pointcloud_raw_ex",
+    "/sensing/lidar/top/pointcloud_raw_ex",
+}
 
 class PlayerNode(Node):
     def __init__(self):
         super().__init__("bag_player_node")
         
+        self.topic_filter_list = topic_filter_list
         self.replay_topic_list = replay_topic_list
+        self.important_topics = import_topic_list
         
         # get the ros bag file path
         self.declare_parameter("bag_file", "")
         self.bag_file = self.get_parameter("bag_file").get_parameter_value().string_value
         
+        # get the sensor model name
+        self.declare_parameter("sensor_model", "")
+        sensor_desc_pkg = self.get_parameter("sensor_model").get_parameter_value().string_value + "_description"
+        self.sensor_tfs = self.get_sensor_tfs(sensor_desc_pkg)
+        
         # read the bag file to get the topics
-        self.read_bag()
+        self.reader = self.get_bag_reader()
+        
+        # break the dataset into frames that we can replay
+        self.frames = self.get_frames_from_reader(self.reader)
+        self.frame_idx = 0
         
         # create publishers for all topics
         self.publishers_ = {}
         for topic in self.replay_topic_list:
             if topic in self.typestr_to_type:
+                # create a publisher for the topic
                 self.publishers_[topic] = self.create_publisher(self.typestr_to_type[topic], topic, 1)
             else:
                 self.get_logger().info(f"Topic {topic} not found in the bag file.")
@@ -129,67 +122,32 @@ class PlayerNode(Node):
         
         self.current_scene_processed = False
         
+        # create the transform broadcaster for the tf and tf_static messages
         self.pose_broadcaster = TransformBroadcaster(self)
         self.static_tf_publisher = StaticTransformBroadcaster(self)
+        self.vector_map_publisher = self.create_publisher(self.typestr_to_type["/map/vector_map"], "/map/vector_map", 1)
 
-        # self.dataset = None
-        # self.current_scene_processed = False
-
-        # self.pub_lidar_front = self.create_publisher(PointCloud2, "/point_cloud/front_lidar", 10)
-        # self.pub_lidar_rear = self.create_publisher(PointCloud2, "/point_cloud/rear_lidar", 10)
-        # self.pub_lidar_side_left = self.create_publisher(
-        #     PointCloud2, "/point_cloud/side_left_lidar", 10
-        # )
-        # self.pub_lidar_side_right = self.create_publisher(
-        #     PointCloud2, "/point_cloud/side_right_lidar", 10
-        # )
-        # self.pub_lidar_top = self.create_publisher(PointCloud2, "/point_cloud/top_lidar", 10)
-
-        # self.pub_gt_objects = self.create_publisher(TrackedObjects, "/gt_objects", 10)
-
-        # self.point_fields = [
-        #     PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
-        #     PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
-        #     PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
-        # ]
-
-        # self.pose_broadcaster = TransformBroadcaster(self)
-        # self.static_tf_publisher = StaticTransformBroadcaster(self)
-
-        # self.waymo_evaluation_frame = "base_link"
-
-        # self.prediction_proto_objects = metrics_pb2.Objects()
-        # self.gt_proto_objects = metrics_pb2.Objects()
-
-    def read_bag(self):
+    def get_bag_reader(self):
+        self.get_logger().info("Reading bag file...")
+        
         # init bag reader
-        self.reader = SequentialReader()
+        reader = SequentialReader()
         storage_options = StorageOptions(uri=self.bag_file, storage_id="sqlite3")
         converter_options = ConverterOptions(input_serialization_format="cdr", output_serialization_format="cdr")
-        self.reader.open(storage_options, converter_options)
+        reader.open(storage_options, converter_options)
         
         # get the bag metadata
-        self.topic_types = self.reader.get_all_topics_and_types()
-        self.get_logger().info(f"{len(self.topic_types)} topics found.")
-        self.get_logger().info(f"We only want to replay {len(self.replay_topic_list)} topics.")
+        self.topic_types = reader.get_all_topics_and_types()
         
         # get the type string to type mapping
         self.typestr_to_type = {}
         for meta_info in self.topic_types:
             self.typestr_to_type[meta_info.name] = locate(meta_info.type.replace("/", "."))
         
-        # print all topic names
-        # self.get_logger().info(f"Topics found: {list(self.typestr_to_type.keys())}")
-        
-        # add all localization and sensing topics to the replay list
-        # for topic, type_ in self.typestr_to_type.items():
-        #     if "/sensing" in topic or "/localization" in topic:
-        #         self.replay_topic_list.add(topic)
-        
         # filter to only the topics we want to replay
-        self.reader.set_filter(StorageFilter(topics=list(self.replay_topic_list)))
+        reader.set_filter(StorageFilter(topics=list(self.topic_filter_list)))
         
-        self.get_logger().info("Bag file read.")
+        return reader
     
     def reset_dataset(self, request, response):
         self.get_logger().info("Resetting dataset...")
@@ -200,7 +158,7 @@ class PlayerNode(Node):
 
     def frame_processed_callback(self, request, response):
         # publish next frame
-        if self.reader.has_next():
+        if self.frame_idx < len(self.frames):
             self.publish_next_frame()
             # self.get_logger().info("Frame published.")
             
@@ -220,16 +178,32 @@ class PlayerNode(Node):
             return response
     
     def publish_next_frame(self):
-        # publish each topic until we hit the concatenated pointcloud topic
-        while self.reader.has_next():
-            topic, msg, t = self.reader.read_next()
-            if topic == "/sensing/lidar/concatenated/pointcloud":
-                self.publishers_[topic].publish(msg)
-                break
-            if topic in self.publishers_:
-                self.publishers_[topic].publish(msg)
-                # self.get_logger().info(f"Published {topic}: {type(msg)}")
-
+        # get the next frame
+        frame = self.frames[self.frame_idx]
+        
+        # get frame info
+        msgs = frame["msgs"]
+        time = frame["time"]
+        tfs = frame["tfs"]
+        
+        # publish the static tfs
+        self.publish_static_tfs(time)
+        
+        # publish the vector map
+        self.publish_vector_map(time)
+        
+        # publish the pose tfs
+        for tf in tfs:
+            self.pose_broadcaster.sendTransform(tf.transforms)
+        
+        # publish the messages in the frame
+        for topic, msg in msgs:
+            # self.get_logger().info(f"Publishing message on topic {topic}")
+            self.publishers_[topic].publish(msg)
+        
+        self.frame_idx += 1
+        
+        
     def read_dataset_segment(self, request, response):
     #     if self.tf_segment_idx >= len(self.tf_list):
     #         self.get_logger().info("All Waymo segments in the given path have been processed.")
@@ -242,244 +216,157 @@ class PlayerNode(Node):
         response.success = True
         response.message = "Segment read"
         return response
+    
+    def get_frames_from_reader(self, reader):
+        
+        sensor_data_msgs = {}
+        tf_msgs = []
+        self.vector_map_msg = None
+        last_nanosec = None
+        frame_idx = 0
+        
+        # skip until the first tf message
+        while reader.has_next():
+            topic, msg, _ = reader.read_next()
+            if "vector_map" in topic:
+                self.vector_map_msg = deserialize_message(msg, self.typestr_to_type[topic])
+            elif "tf" in topic:
+                msg = deserialize_message(msg, self.typestr_to_type[topic])
+                tf_msgs.append((msg.transforms[0].header.stamp, topic, msg))
+                break
+        
+        # read all messages
+        while reader.has_next():
+            topic, msg, _ = reader.read_next()
+            msg = deserialize_message(msg, self.typestr_to_type[topic])
+            if "tf" in topic:
+                timestamp = msg.transforms[0].header.stamp
+                tf_msgs.append((timestamp, topic, msg))
+            
+            elif "vector_map" in topic:
+                self.vector_map_msg = msg
+                
+            else:
+                if not last_nanosec:
+                    last_nanosec = msg.header.stamp.nanosec
+                    sensor_data_msgs[frame_idx] = []
+                
+                elif msg.header.stamp.nanosec != last_nanosec:
+                    frame_idx += 1
+                    sensor_data_msgs[frame_idx] = []
+                    
+                timestamp = msg.header.stamp
+                sensor_data_msgs[frame_idx].append((timestamp, topic, msg))
+                last_nanosec = msg.header.stamp.nanosec
+        
+        # filter out all of the frames that don't contain all of the replay topics
+        filtered_frames = sensor_data_msgs.copy()
+        for frame_idx, sensor_msgs in sensor_data_msgs.items():
+            sensor_topics = {sensor_msg[1] for sensor_msg in sensor_msgs}
+            if not self.important_topics.issubset(sensor_topics):
+                del filtered_frames[frame_idx]
+        
+        # reindex the frames after filtering
+        sensor_data_msgs = {i: msgs for i, (_, msgs) in enumerate(filtered_frames.items())}
+        
+        # Sort TF messages by timestamp for efficient lookup
+        tf_msgs.sort(key=lambda x: x[0].sec * 1e9 + x[0].nanosec)
+        tf_timestamps = [tf[0].sec * 1e9 + tf[0].nanosec for tf in tf_msgs]
 
-
-    # Below part copied
-    # def publish_scene(self):
-    #     self.set_scene_processed(True)
-
-    #     current_scene = self.dataset.get_scene_from_dataset()
-    #     scene_time_as_ros_time = Time(
-    #         nanoseconds=int(current_scene["TIMESTAMP_MICRO"]) * 1000, clock_type=ClockType.ROS_TIME
-    #     )
-
-    #     self.publish_static_tf(scene_time_as_ros_time)
-    #     self.publish_pose(current_scene["VEHICLE_POSE"], scene_time_as_ros_time)
-    #     self.publish_lidar_data(current_scene, scene_time_as_ros_time)
-    #     self.publish_gt_objects(current_scene, scene_time_as_ros_time)
-
-    #     if self.use_camera:
-    #         self.publish_camera_images(current_scene, scene_time_as_ros_time)
-    #         self.publish_camera_info(current_scene, scene_time_as_ros_time)
-
-    # def is_dataset_finished(self):
-    #     return self.dataset.is_finished()
-
-    # def publish_pose(self, vehicle_pose, ros_time):
-    #     transform_stamped = TransformStamped()
-    #     transform_stamped.header.stamp = ros_time.to_msg()
-    #     transform_stamped.header.frame_id = "map"
-    #     transform_stamped.child_frame_id = "base_link"
-
-    #     rot_mat = vehicle_pose[0:3, 0:3]
-    #     [rx, ry, rz] = rotation_matrix_to_euler_angles(rot_mat)
-
-    #     transform_stamped.transform.translation.x = float(vehicle_pose[0, 3])
-    #     transform_stamped.transform.translation.y = float(vehicle_pose[1, 3])
-    #     transform_stamped.transform.translation.z = float(vehicle_pose[2, 3])
-
-    #     quat = tf_transformations.quaternion_from_euler(float(rx), float(ry), float(rz))
-
-    #     transform_stamped.transform.rotation.x = quat[0]
-    #     transform_stamped.transform.rotation.y = quat[1]
-    #     transform_stamped.transform.rotation.z = quat[2]
-    #     transform_stamped.transform.rotation.w = quat[3]
-
-    #     self.pose_broadcaster.sendTransform(transform_stamped)
-
-    # def publish_static_tf(self, ros_time):
-    #     lidar_transforms = self.dataset.get_lidars_static_tf()
-
-    #     # Front lidar
-    #     static_ts_front_lidar = make_transform_stamped(
-    #         "base_link", "front_laser", lidar_transforms["FRONT_LASER_EXTRINSIC"], ros_time
-    #     )
-    #     # Rear lidar
-    #     static_ts_rear_lidar = make_transform_stamped(
-    #         "base_link", "rear_laser", lidar_transforms["REAR_LASER_EXTRINSIC"], ros_time
-    #     )
-    #     # Side left lidar
-    #     static_ts_side_left_lidar = make_transform_stamped(
-    #         "base_link", "side_left_laser", lidar_transforms["SIDE_LEFT_LASER_EXTRINSIC"], ros_time
-    #     )
-    #     # Side right lidar
-    #     static_ts_side_right_lidar = make_transform_stamped(
-    #         "base_link",
-    #         "side_right_laser",
-    #         lidar_transforms["SIDE_RIGHT_LASER_EXTRINSIC"],
-    #         ros_time,
-    #     )
-    #     # Top lidar
-    #     static_ts_top_lidar = make_transform_stamped(
-    #         "base_link", "top_laser", lidar_transforms["TOP_LASER_EXTRINSIC"], ros_time
-    #     )
-
-    #     camera_transforms = self.dataset.get_cameras_static_tf()
-    #     # Front camera
-    #     static_ts_front_camera = make_transform_stamped(
-    #         "base_link", "front_camera", camera_transforms["FRONT_CAM_EXTRINSIC"], ros_time
-    #     )
-    #     # Front left camera
-    #     static_ts_front_left_camera = make_transform_stamped(
-    #         "base_link",
-    #         "front_left_camera",
-    #         camera_transforms["FRONT_LEFT_CAM_EXTRINSIC"],
-    #         ros_time,
-    #     )
-    #     # Front right camera
-    #     static_ts_front_right_camera = make_transform_stamped(
-    #         "base_link",
-    #         "front_right_camera",
-    #         camera_transforms["FRONT_RIGHT_CAM_EXTRINSIC"],
-    #         ros_time,
-    #     )
-    #     # Side left camera
-    #     static_ts_side_left_camera = make_transform_stamped(
-    #         "base_link", "side_left_camera", camera_transforms["SIDE_LEFT_CAM_EXTRINSIC"], ros_time
-    #     )
-    #     # Side right camera
-    #     static_ts_side_right_camera = make_transform_stamped(
-    #         "base_link",
-    #         "side_right_camera",
-    #         camera_transforms["SIDE_RIGHT_CAM_EXTRINSIC"],
-    #         ros_time,
-    #     )
-
-    #     self.static_tf_publisher.sendTransform(
-    #         [
-    #             static_ts_front_lidar,
-    #             static_ts_rear_lidar,
-    #             static_ts_side_left_lidar,
-    #             static_ts_side_right_lidar,
-    #             static_ts_top_lidar,
-    #             static_ts_front_camera,
-    #             static_ts_front_left_camera,
-    #             static_ts_front_right_camera,
-    #             static_ts_side_left_camera,
-    #             static_ts_side_right_camera,
-    #         ]
-    #     )
-
-    # def publish_camera_images(self, current_scene, ros_time_now):
-    #     self.pub_camera_front.publish(
-    #         create_image_msgs("front_camera", current_scene["FRONT_IMAGE"], ros_time_now)
-    #     )
-    #     self.pub_camera_front_left.publish(
-    #         create_image_msgs("front_left_camera", current_scene["FRONT_LEFT_IMAGE"], ros_time_now)
-    #     )
-    #     self.pub_camera_front_right.publish(
-    #         create_image_msgs(
-    #             "front_right_camera", current_scene["FRONT_RIGHT_IMAGE"], ros_time_now
-    #         )
-    #     )
-    #     self.pub_camera_side_left.publish(
-    #         create_image_msgs("side_left_camera", current_scene["SIDE_LEFT_IMAGE"], ros_time_now)
-    #     )
-    #     self.pub_camera_side_right.publish(
-    #         create_image_msgs("side_right_camera", current_scene["SIDE_RIGHT_IMAGE"], ros_time_now)
-    #     )
-
-    # def publish_camera_info(self, current_scene, ros_time_now):
-    #     self.pub_cam_info_front.publish(
-    #         create_camera_info("base_link", current_scene["FRONT_CAM_INFO"], ros_time_now)
-    #     )
-    #     self.pub_cam_info_front_left.publish(
-    #         create_camera_info("base_link", current_scene["FRONT_LEFT_CAM_INFO"], ros_time_now)
-    #     )
-    #     self.pub_cam_info_front_right.publish(
-    #         create_camera_info("base_link", current_scene["FRONT_RIGHT_CAM_INFO"], ros_time_now)
-    #     )
-    #     self.pub_cam_info_side_left.publish(
-    #         create_camera_info("base_link", current_scene["SIDE_LEFT_CAM_INFO"], ros_time_now)
-    #     )
-    #     self.pub_cam_info_side_right.publish(
-    #         create_camera_info("base_link", current_scene["SIDE_RIGHT_CAM_INFO"], ros_time_now)
-    #     )
-
-    # def publish_lidar_data(self, current_scene, ros_time_now):
-    #     self.pub_lidar_top.publish(
-    #         create_point_cloud_mgs("base_link", current_scene["TOP_LASER"], ros_time_now)
-    #     )
-    #     self.pub_lidar_front.publish(
-    #         create_point_cloud_mgs("base_link", current_scene["FRONT_LASER"], ros_time_now)
-    #     )
-    #     self.pub_lidar_side_left.publish(
-    #         create_point_cloud_mgs("base_link", current_scene["SIDE_LEFT_LASER"], ros_time_now)
-    #     )
-    #     self.pub_lidar_side_right.publish(
-    #         create_point_cloud_mgs("base_link", current_scene["SIDE_RIGHT_LASER"], ros_time_now)
-    #     )
-    #     self.pub_lidar_rear.publish(
-    #         create_point_cloud_mgs("base_link", current_scene["REAR_LASER"], ros_time_now)
-    #     )
-
-    # def publish_gt_objects(self, current_scene, ros_time):
-
-    #     ground_truth_objects = TrackedObjects()
-    #     ground_truth_objects.header.frame_id = "base_link"
-    #     ground_truth_objects.header.stamp = ros_time.to_msg()
-
-    #     for gt_object in current_scene["GT_OBJECTS"]:
-
-    #         if gt_object.num_lidar_points_in_box <= 0:
-    #             continue
-
-    #         gt_detected_object = TrackedObject()
-    #         object_classification = ObjectClassification()
-    #         gt_detected_object.existence_probability = 1.0
-
-    #         if gt_object.type == label_pb2.Label.TYPE_VEHICLE:
-    #             object_classification.label = ObjectClassification.CAR
-    #             gt_detected_object.shape.type = Shape.BOUNDING_BOX
-    #         elif gt_object.type == label_pb2.Label.TYPE_PEDESTRIAN:
-    #             object_classification.label = ObjectClassification.PEDESTRIAN
-    #             gt_detected_object.shape.type = Shape.CYLINDER
-    #         elif gt_object.type == label_pb2.Label.TYPE_CYCLIST:
-    #             object_classification.label = ObjectClassification.BICYCLE
-    #             gt_detected_object.shape.type = Shape.BOUNDING_BOX
-    #         else:
-    #             continue
-
-    #         gt_detected_object.classification.append(object_classification)
-
-    #         # Pedestrian bounding boxes x and y fixed in Autoware
-    #         if gt_object.type == label_pb2.Label.TYPE_PEDESTRIAN:
-    #             gt_detected_object.shape.dimensions.x = 1.0
-    #             gt_detected_object.shape.dimensions.y = 1.0
-    #             gt_detected_object.shape.dimensions.z = gt_object.box.height
-    #         else:
-    #             gt_detected_object.shape.dimensions.x = gt_object.box.length
-    #             gt_detected_object.shape.dimensions.y = gt_object.box.width
-    #             gt_detected_object.shape.dimensions.z = gt_object.box.height
-
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.position.x = (
-    #             gt_object.box.center_x
-    #         )
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.position.y = (
-    #             gt_object.box.center_y
-    #         )
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.position.z = (
-    #             gt_object.box.center_z
-    #         )
-
-    #         q = tf_transformations.quaternion_from_euler(0, 0, gt_object.box.heading)
-
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.orientation.x = q[0]
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.orientation.y = q[1]
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.orientation.z = q[2]
-    #         gt_detected_object.kinematics.pose_with_covariance.pose.orientation.w = q[3]
-
-    #         str_1_encoded = gt_object.id.encode(encoding="UTF-8")
-    #         uuid_msg = UUID()
-
-    #         for i in range(16):
-    #             uuid_msg.uuid[i] = str_1_encoded[i]
-
-    #         gt_detected_object.object_id = uuid_msg
-    #         ground_truth_objects.objects.append(gt_detected_object)
-
-    #     self.pub_gt_objects.publish(ground_truth_objects)
-
+        frames = []
+        
+        for frame_idx, sensor_msgs in sensor_data_msgs.items():
+            timestamp = sensor_msgs[0][0]
+            sensor_nanosec = timestamp.sec * 1e9 + timestamp.nanosec
+            
+            # Find the closest TFs before and after the sensor message
+            idx = bisect.bisect_left(tf_timestamps, sensor_nanosec)
+            
+            # TFs before the sensor message
+            tfs_before = [tf_msgs[i] for i in range(idx) if tf_msgs[i][0].sec * 1e9 + tf_msgs[i][0].nanosec <= sensor_nanosec]
+            
+            # TFs after the sensor message
+            tfs_after = [tf_msgs[i] for i in range(idx, len(tf_msgs)) if tf_msgs[i][0].sec * 1e9 + tf_msgs[i][0].nanosec >= sensor_nanosec]
+            
+            frame_tfs = tfs_before[-2:] + tfs_after[:2]
+            
+            # get the transforms
+            frame_tfs = [tf[2] for tf in frame_tfs]
+            
+            # skip if we don't have a tf before and after
+            if len(frame_tfs) != 4:
+                continue
+            
+            # Create the frame with the sensor message, the closest TFs before and after
+            frame = {
+                'msgs': [(sensor_msg[1], sensor_msg[2]) for sensor_msg in sensor_msgs],
+                'tfs': frame_tfs,
+                'time': timestamp,
+            }
+            frames.append(frame)
+        
+        self.get_logger().info(f"Vector map exists: {self.vector_map_msg != None}")
+    
+        return frames
+    
+    def get_sensor_tfs(self, sensor_desc_name):
+        # get the paths to the sensor model yaml files
+        sensor_desc_path = get_package_share_directory(sensor_desc_name)
+        sensor_kit_calibration_path = os.path.join(sensor_desc_path, "config", f"sensor_kit_calibration.yaml")
+        sensors_calibration_path = os.path.join(sensor_desc_path, "config", f"sensors_calibration.yaml")
+        
+        # load the sensor calibration yaml files
+        sensor_kit_calibration = yaml.safe_load(open(sensor_kit_calibration_path, "r"))
+        sensors_calibration = yaml.safe_load(open(sensors_calibration_path, "r"))
+        
+        # we need to publish a tf from base_link to velodyne_front_base_link
+        # so we need to get the transform from base_link to sensor_kit_base_link
+        # and the transform from sensor_kit_base_link to velodyne_front_base_link
+        # and the we combine them to get the transform from base_link to velodyne_front_base_link
+        base_link_to_sensor_kit = self.get_transform_from_dict(sensors_calibration["base_link"]["sensor_kit_base_link"])
+        sensor_kit_to_sensor = {}
+        for sensor, tf_dict in sensor_kit_calibration["sensor_kit_base_link"].items():
+            sensor_kit_to_sensor[sensor] = self.get_transform_from_dict(tf_dict)
+        
+        # now we need to combine the transforms
+        sensor_tfs = {}
+        for sensor, tf in sensor_kit_to_sensor.items():
+            sensor_tfs[sensor] = compose_transforms(base_link_to_sensor_kit, tf)
+        
+        # convert to TransformStamped
+        for sensor, tf in sensor_tfs.items():
+            ts = TransformStamped()
+            ts.header.frame_id = "base_link"
+            
+            # update the sensor name
+            sensor_name = sensor
+            if "_base_link" in sensor:
+                sensor_name = sensor.replace("_base_link", "")
+                
+            ts.child_frame_id = sensor_name
+            ts.transform = tf
+            sensor_tfs[sensor] = ts
+        
+        return sensor_tfs
+        
+    def get_transform_from_dict(self, tf_dict):
+        t = Transform()
+        t.translation = Vector3(x=tf_dict["x"], y=tf_dict["y"], z=tf_dict["z"])
+        q = tf_transformations.quaternion_from_euler(tf_dict["roll"], tf_dict["pitch"], tf_dict["yaw"])
+        t.rotation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
+        return t
+    
+    def publish_static_tfs(self, time):
+        for tf in self.sensor_tfs.values():
+            tf.header.stamp = time
+        self.static_tf_publisher.sendTransform(list(self.sensor_tfs.values()))
+    
+    def publish_vector_map(self, time):
+        if self.vector_map_msg:
+            # self.get_logger().info("Publishing vector map...")
+            self.vector_map_msg.header.stamp = time
+            self.vector_map_publisher.publish(self.vector_map_msg)
+    
     def scene_processed(self):
         return self.current_scene_processed
 

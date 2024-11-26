@@ -68,6 +68,7 @@ def generate_launch_description():
         parameters=[
             {
                 "bag_file": LaunchConfiguration("bag_file"),
+                "sensor_model": LaunchConfiguration("sensor_model"),
             }
         ],
     )

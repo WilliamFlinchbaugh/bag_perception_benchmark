@@ -16,8 +16,7 @@ import math
 from typing import Iterable
 from typing import Optional
 from typing import Tuple
-
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Transform
 import numpy as np
 
 
@@ -92,8 +91,8 @@ def build_affine(
     return affine
 
 
-def transform_to_affine(transform: TransformStamped) -> np.ndarray:
-    transform = transform.transform
+def transform_to_affine(transform: Transform) -> np.ndarray:
+    # transform = transform.transform
     transform_rotation_matrix = [
         transform.rotation.w,
         transform.rotation.x,
@@ -154,3 +153,57 @@ def get_quat_from_mat(rot_mat: np.ndarray) -> np.ndarray:
 
 def decompose_affine(affine: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return get_quat_from_mat(affine[:3, :3]), affine[:3, 3]
+
+
+def matrix_to_transform(matrix):
+    translation = matrix[:3, 3]
+    rot_matrix = matrix[:3, :3]
+    
+    # Compute quaternion from rotation matrix
+    tr = np.trace(rot_matrix)
+    if tr > 0:
+        S = np.sqrt(tr + 1.0) * 2
+        w = 0.25 * S
+        x = (rot_matrix[2, 1] - rot_matrix[1, 2]) / S
+        y = (rot_matrix[0, 2] - rot_matrix[2, 0]) / S
+        z = (rot_matrix[1, 0] - rot_matrix[0, 1]) / S
+    elif (rot_matrix[0, 0] > rot_matrix[1, 1]) and (rot_matrix[0, 0] > rot_matrix[2, 2]):
+        S = np.sqrt(1.0 + rot_matrix[0, 0] - rot_matrix[1, 1] - rot_matrix[2, 2]) * 2
+        w = (rot_matrix[2, 1] - rot_matrix[1, 2]) / S
+        x = 0.25 * S
+        y = (rot_matrix[0, 1] + rot_matrix[1, 0]) / S
+        z = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
+    elif rot_matrix[1, 1] > rot_matrix[2, 2]:
+        S = np.sqrt(1.0 + rot_matrix[1, 1] - rot_matrix[0, 0] - rot_matrix[2, 2]) * 2
+        w = (rot_matrix[0, 2] - rot_matrix[2, 0]) / S
+        x = (rot_matrix[0, 1] + rot_matrix[1, 0]) / S
+        y = 0.25 * S
+        z = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
+    else:
+        S = np.sqrt(1.0 + rot_matrix[2, 2] - rot_matrix[0, 0] - rot_matrix[1, 1]) * 2
+        w = (rot_matrix[1, 0] - rot_matrix[0, 1]) / S
+        x = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
+        y = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
+        z = 0.25 * S
+
+    return translation, [x, y, z, w]
+
+
+def compose_transforms(transform_a_b, transform_b_c):
+    a_b_mat = transform_to_affine(transform_a_b)
+    b_c_mat = transform_to_affine(transform_b_c)
+    composed_mat = np.dot(a_b_mat, b_c_mat)
+    composed_transform = Transform()
+    
+    comp_translation, comp_quaternion = matrix_to_transform(composed_mat)
+    
+    composed_transform.translation.x = comp_translation[0]
+    composed_transform.translation.y = comp_translation[1]
+    composed_transform.translation.z = comp_translation[2]
+    
+    composed_transform.rotation.x = comp_quaternion[0]
+    composed_transform.rotation.y = comp_quaternion[1]
+    composed_transform.rotation.z = comp_quaternion[2]
+    composed_transform.rotation.w = comp_quaternion[3]
+    
+    return composed_transform
