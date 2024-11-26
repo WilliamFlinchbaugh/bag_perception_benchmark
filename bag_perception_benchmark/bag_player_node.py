@@ -20,7 +20,6 @@ from autoware_perception_msgs.msg import TrackedObject
 from autoware_perception_msgs.msg import TrackedObjects
 from geometry_msgs.msg import TransformStamped
 from .benchmark_tools.math_utils import compose_transforms
-from .benchmark_tools.ros_utils import make_transform_stamped
 import rclpy
 from rclpy.time import Time
 from rclpy.clock import ClockType
@@ -47,10 +46,7 @@ from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import Vector3
 from ament_index_python.packages import get_package_share_directory
 import yaml
-from tf2_msgs.msg import TFMessage
 import os
-import matplotlib.pyplot as plt
-import numpy as np
 import bisect
 
 
@@ -62,6 +58,7 @@ topic_filter_list = {
     "/sensing/vehicle_velocity_converter/twist_with_covariance",
     "/sensing/imu/imu_data",
     "/map/vector_map",
+    "/simulation/entity/marker",
     "/tf"
 }
 
@@ -251,17 +248,21 @@ class PlayerNode(Node):
                 self.vector_map_msg = msg
                 
             else:
+                if "marker" in topic:
+                    timestamp = msg.markers[0].header.stamp
+                else:
+                    timestamp = msg.header.stamp
+                
                 if not last_nanosec:
-                    last_nanosec = msg.header.stamp.nanosec
+                    last_nanosec = timestamp.nanosec
                     sensor_data_msgs[frame_idx] = []
                 
-                elif msg.header.stamp.nanosec != last_nanosec:
+                elif timestamp.nanosec != last_nanosec:
                     frame_idx += 1
                     sensor_data_msgs[frame_idx] = []
-                    
-                timestamp = msg.header.stamp
+                
                 sensor_data_msgs[frame_idx].append((timestamp, topic, msg))
-                last_nanosec = msg.header.stamp.nanosec
+                last_nanosec = timestamp.nanosec
         
         # filter out all of the frames that don't contain all of the replay topics
         filtered_frames = sensor_data_msgs.copy()

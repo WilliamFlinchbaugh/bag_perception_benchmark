@@ -21,10 +21,10 @@ from bag_perception_benchmark.benchmark_tools.math_utils import build_affine
 from bag_perception_benchmark.benchmark_tools.math_utils import decompose_affine
 from bag_perception_benchmark.benchmark_tools.math_utils import rotation_matrix_to_euler_angles
 from bag_perception_benchmark.benchmark_tools.math_utils import transform_to_affine
+from bag_percpetion_benchmark.benchmark_tools.math_utils import quaternion_from_euler
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
-import tf_transformations
 
 
 def create_point_cloud_mgs(frame_id, lidar_frame, ros_time):
@@ -81,7 +81,7 @@ def make_transform_stamped(header_frame_id, child_frame_id, lidar_transform, ros
     static_transform_stamped.transform.translation.x = float(lidar_transform[0, 3])
     static_transform_stamped.transform.translation.y = float(lidar_transform[1, 3])
     static_transform_stamped.transform.translation.z = float(lidar_transform[2, 3])
-    quat = tf_transformations.quaternion_from_euler(rx, ry, rz)
+    quat = quaternion_from_euler(rx, ry, rz)
     static_transform_stamped.transform.rotation.x = quat[0]
     static_transform_stamped.transform.rotation.y = quat[1]
     static_transform_stamped.transform.rotation.z = quat[2]
