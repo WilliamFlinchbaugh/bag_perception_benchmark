@@ -14,24 +14,41 @@
 
 import signal
 from subprocess import Popen, STDOUT, PIPE, DEVNULL
-from autoware_perception_msgs.msg import DetectedObjects
-import rclpy.qos
+from autoware_perception_msgs.msg import DetectedObjects, TrackedObjects, PredictedObjects
 from sensor_msgs.msg import PointCloud2
 import psutil
 import rclpy
+from rclpy.qos import QoSProfile
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
+from rclpy.serialization import serialize_message
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 import threading
 from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
+import rosbag2_py
+from rosbag2_py._storage import TopicMetadata
+import os
+import shutil
 
 capture_topics = {
-    "/perception/object_recognition/detection/centerpoint/objects"
+    "/perception/object_recognition/detection/centerpoint/objects": DetectedObjects,
+    "/perception/object_recognition/detection/centerpoint/validation/objects": DetectedObjects,
+    "/perception/object_recognition/detection/objects": DetectedObjects,
+    "/perception/object_recognition/detection/clustering/objects": DetectedObjects,
+    "/perception/object_recognition/objects": PredictedObjects,
+    "/perception/object_recognition/detection/detection_by_tracker/objects": DetectedObjects,
+    "/perception/object_recognition/tracking/objects": TrackedObjects,
 }
+
+final_topic = "/perception/object_recognition/objects"
 
 class RunnerNode(Node):
     def __init__(self):
         super().__init__("autoware_workflow_runner_node")
+        
+        self.capture_topics = capture_topics
+        self.final_topic = final_topic
 
         self.declare_parameter("launch_file", "")
         self.launch_file = self.get_parameter("launch_file").get_parameter_value().string_value
@@ -41,10 +58,24 @@ class RunnerNode(Node):
 
         self.declare_parameter("sensor_model", "")
         self.sensor_model = self.get_parameter("sensor_model").get_parameter_value().string_value
-
+        
         self.autoware_pid = None
         self.timer_subs_checker = None
-
+        
+        self.declare_parameter("bag_file", "")
+        bag_file = self.get_parameter("bag_file").get_parameter_value().string_value
+        
+        # get output bag file path
+        output_bag_path = os.path.join(os.path.dirname(bag_file), os.path.basename(bag_file).replace(".db3", "_output"))
+        if os.path.exists(output_bag_path):
+            shutil.rmtree(output_bag_path)
+        
+        # open the output bag
+        self.writer = rosbag2_py.SequentialWriter()
+        storage_options = rosbag2_py.StorageOptions(uri=output_bag_path, storage_id="sqlite3")
+        converter_options = rosbag2_py.ConverterOptions('', '')
+        self.writer.open(storage_options, converter_options)
+        
         self.client_read_dataset_futures = []
         self.client_read_dataset = self.create_client(Trigger, "read_current_segment")
         while not self.client_read_dataset.wait_for_service(timeout_sec=3.0):
@@ -64,18 +95,15 @@ class RunnerNode(Node):
             Bool, "segment_finished", self.segment_finished_callback, 1
         )
         
-        self.outputs_to_save = {}
-        
-        # setup subscriber to detected objects from centerpoint
-        self.det_objects_frames = []
-        self.sub_det_objects = self.create_subscription(
-            DetectedObjects, "/perception/object_recognition/detection/centerpoint/objects", self.det_objects_callback, 1
+        qos_profile = QoSProfile(
+            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
+            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
+            depth=10,
+            durability=rclpy.qos.DurabilityPolicy.VOLATILE,
+            liveliness=rclpy.qos.LivelinessPolicy.AUTOMATIC
         )
-        
-        # setup subscriber to ground truth objects
-        self.gt_objects_frames = []
-        self.sub_gt_objects = self.create_subscription(
-            EntityStatusWithTrajectoryArray, "/simulation/entity/status", self.gt_objects_callback, 1
+        self.sub_final_topic = self.create_subscription(
+            self.capture_topics[self.final_topic], self.final_topic, self.final_topic_callback, qos_profile
         )
         
         self.read_dataset_request()
@@ -119,9 +147,6 @@ class RunnerNode(Node):
     def segment_finished_callback(self, ready):
         self.get_logger().info("Autoware is being killed. ")
         
-        # save the detected objects to a json file
-        self.save_outputs()
-        
         # kill autoware
         self.kill_autoware(self.autoware_pid)
         
@@ -137,8 +162,41 @@ class RunnerNode(Node):
 
         if self.check_lidar_model_ready():
             self.get_logger().info("Autoware ready.")
+            self.setup_output_bag()
             self.read_frame_request()
             self.destroy_timer(self.timer_subs_checker)
+            
+    def setup_output_bag(self):
+        # add topics to the output bag and setup msg2topic mapping
+        self.msg2topic = {}
+        for topic, msg_type in self.capture_topics.items():
+            metadata = TopicMetadata(
+                name=topic,
+                type=msg_type.__module__ + "/" + msg_type.__name__,
+                serialization_format="cdr")
+            self.writer.create_topic(metadata)
+            
+            self.msg2topic[msg_type] = topic
+        
+        # create subscriber for each topic
+        self.subscribers = {}
+        qos_profile = QoSProfile(
+            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
+            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
+            depth=10,
+            durability=rclpy.qos.DurabilityPolicy.VOLATILE,
+            liveliness=rclpy.qos.LivelinessPolicy.AUTOMATIC
+        )
+        for topic, msg_type in self.capture_topics.items():
+            self.subscribers[topic] = self.create_subscription(
+                msg_type, topic, self.write_to_output_bag, qos_profile
+            )
+    
+    def write_to_output_bag(self, msg):
+        topic = self.msg2topic[type(msg)]
+        serialized_msg = serialize_message(msg)
+        self.writer.write(topic, serialized_msg, self.get_clock().now().nanoseconds)
+        
 
     def run_autoware(self):
         cmd = (
@@ -191,21 +249,16 @@ class RunnerNode(Node):
         )
         return bool(centerpoint_ready or apollo_ready)
 
-    def det_objects_callback(self, det_objects):
-        # num_objects = len(det_objects.objects)
-        # self.get_logger().info(f"Receieved object detection")
-        # self.det_objects_frames.append(det_objects)
+    def final_topic_callback(self, det_objects):
         self.read_frame_request()
-        
-    def gt_objects_callback(self, gt_objects):
-        self.gt_objects_frames.append(gt_objects)
-        
-    def save_outputs(self):
-        pass
         
 
 def main(args=None):
-    rclpy.init(args=args)
-    autoware_workflow_runner_node = RunnerNode()
-    autoware_workflow_runner_node.spin()
-    rclpy.shutdown()
+    try:
+        rclpy.init(args=args)
+        autoware_workflow_runner_node = RunnerNode()
+        autoware_workflow_runner_node.spin()
+        rclpy.shutdown()
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+        

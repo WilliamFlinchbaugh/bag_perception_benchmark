@@ -52,8 +52,8 @@ import bisect
 
 topic_filter_list = {
     "/sensing/imu/tamagawa/imu_raw",
-    "/sensing/lidar/left/pointcloud_raw_ex",
-    "/sensing/lidar/right/pointcloud_raw_ex",
+    # "/sensing/lidar/left/pointcloud_raw_ex",
+    # "/sensing/lidar/right/pointcloud_raw_ex",
     "/sensing/lidar/top/pointcloud_raw_ex",
     "/sensing/vehicle_velocity_converter/twist_with_covariance",
     "/sensing/imu/imu_data",
@@ -65,8 +65,8 @@ topic_filter_list = {
 replay_topic_list = {x for x in topic_filter_list if "tf" not in x and "vector_map" not in x}
 
 import_topic_list = {
-    "/sensing/lidar/left/pointcloud_raw_ex",
-    "/sensing/lidar/right/pointcloud_raw_ex",
+    # "/sensing/lidar/left/pointcloud_raw_ex",
+    # "/sensing/lidar/right/pointcloud_raw_ex",
     "/sensing/lidar/top/pointcloud_raw_ex",
 }
 
@@ -272,12 +272,16 @@ class PlayerNode(Node):
                 sensor_data_msgs[frame_idx].append((timestamp, topic, msg))
                 last_nanosec = timestamp.nanosec
         
+        self.get_logger().info(f"Number of frames before filtering: {len(sensor_data_msgs)}")
+        
         # filter out all of the frames that don't contain all of the replay topics
         filtered_frames = sensor_data_msgs.copy()
         for frame_idx, sensor_msgs in sensor_data_msgs.items():
             sensor_topics = {sensor_msg[1] for sensor_msg in sensor_msgs}
             if not self.important_topics.issubset(sensor_topics):
                 del filtered_frames[frame_idx]
+        
+        self.get_logger().info(f"Number of frames after filtering: {len(filtered_frames)}")
         
         # reindex the frames after filtering
         sensor_data_msgs = {i: msgs for i, (_, msgs) in enumerate(filtered_frames.items())}

@@ -83,6 +83,7 @@ def generate_launch_description():
                 "launch_file": LaunchConfiguration("launch_file"),
                 "vehicle_model": LaunchConfiguration("vehicle_model"),
                 "sensor_model": LaunchConfiguration("sensor_model"),
+                "bag_file": LaunchConfiguration("bag_file"),
             }
         ],
     )
