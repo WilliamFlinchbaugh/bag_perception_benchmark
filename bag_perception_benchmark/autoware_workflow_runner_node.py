@@ -15,6 +15,8 @@
 import signal
 from subprocess import Popen, STDOUT, PIPE, DEVNULL
 from autoware_perception_msgs.msg import DetectedObjects, TrackedObjects, PredictedObjects
+from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
+from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import PointCloud2
 import psutil
 import rclpy
@@ -25,7 +27,7 @@ from rclpy.serialization import serialize_message
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 import threading
-from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
+from visualization_msgs.msg import MarkerArray
 import rosbag2_py
 from rosbag2_py._storage import TopicMetadata
 import os
@@ -39,6 +41,9 @@ capture_topics = {
     "/perception/object_recognition/objects": PredictedObjects,
     "/perception/object_recognition/detection/detection_by_tracker/objects": DetectedObjects,
     "/perception/object_recognition/tracking/objects": TrackedObjects,
+    "/simulation/entity/marker": MarkerArray,
+    "/simulation/entity/status": EntityStatusWithTrajectoryArray,
+    "/tf": TFMessage,
 }
 
 final_topic = "/perception/object_recognition/objects"
@@ -84,11 +89,6 @@ class RunnerNode(Node):
         self.client_read_frame_futures = []
         self.client_read_dataset_frame = self.create_client(Trigger, "send_frame")
         while not self.client_read_dataset_frame.wait_for_service(timeout_sec=3.0):
-            self.get_logger().info("service not available, waiting again...")
-        
-        self.client_reset_dataset_futures = []
-        self.client_reset_dataset = self.create_client(Trigger, "reset_dataset")
-        while not self.client_reset_dataset.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("service not available, waiting again...")
 
         self.sub_segment_finished = self.create_subscription(
@@ -150,11 +150,7 @@ class RunnerNode(Node):
         # kill autoware
         self.kill_autoware(self.autoware_pid)
         
-        # uncomment to have the dataset reset after each segment
-        req = Trigger.Request()
-        self.client_reset_dataset_futures.append(self.client_reset_dataset.call_async(req))
-        
-        self.read_dataset_request()
+        # run benchmark node
 
     def wait_until_autoware_subs_ready(self):
 
@@ -196,7 +192,6 @@ class RunnerNode(Node):
         topic = self.msg2topic[type(msg)]
         serialized_msg = serialize_message(msg)
         self.writer.write(topic, serialized_msg, self.get_clock().now().nanoseconds)
-        
 
     def run_autoware(self):
         cmd = (
