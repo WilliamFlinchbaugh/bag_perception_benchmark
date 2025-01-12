@@ -14,40 +14,28 @@
 
 from glob import glob
 
-from autoware_perception_msgs.msg import ObjectClassification
-from autoware_perception_msgs.msg import Shape
-from autoware_perception_msgs.msg import TrackedObject
-from autoware_perception_msgs.msg import TrackedObjects
 from geometry_msgs.msg import TransformStamped
-from .benchmark_tools.math_utils import compose_transforms
-import rclpy
-from rclpy.time import Time
-from rclpy.clock import ClockType
-from rclpy.node import Node
-from rclpy.qos import QoSProfile
-from sensor_msgs.msg import CameraInfo
-from sensor_msgs.msg import Image
-from sensor_msgs.msg import PointCloud2
-from sensor_msgs.msg import PointField
 from std_msgs.msg import Bool
-from std_srvs.srv import Trigger
-from tf2_ros import TransformBroadcaster
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-import tf_transformations
-# from unique_identifier_msgs.msg import UUID
-from rosbag2_py import SequentialReader, StorageOptions, ConverterOptions, StorageFilter
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
-from pydoc import locate
-from std_msgs.msg import String, Header
 from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import Vector3
+from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
+from .benchmark_tools.math_utils import compose_transforms
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
+from std_srvs.srv import Trigger
+from tf2_ros import TransformBroadcaster
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+import tf_transformations
+from rosbag2_py import SequentialReader, StorageOptions, ConverterOptions, StorageFilter
+from rclpy.serialization import deserialize_message
+from pydoc import locate
 from ament_index_python.packages import get_package_share_directory
 import yaml
 import os
-import bisect
+import pandas as pd
 
 
 topic_filter_list = {
@@ -59,6 +47,7 @@ topic_filter_list = {
     "/sensing/imu/imu_data",
     "/map/vector_map",
     "/simulation/entity/marker",
+    "/simulation/entity/status",
     "/tf"
 }
 
@@ -112,9 +101,6 @@ class PlayerNode(Node):
         self.srv_read_scene_data = self.create_service(
             Trigger, "send_frame", self.frame_processed_callback
         )
-        self.srv_read_scene_data = self.create_service(
-            Trigger, "reset_dataset", self.reset_dataset
-        )
         self.pub_segment_finished = self.create_publisher(Bool, "segment_finished", 1)
         
         self.current_scene_processed = False
@@ -148,28 +134,18 @@ class PlayerNode(Node):
         self.typestr_to_type = {}
         for meta_info in self.topic_types:
             self.typestr_to_type[meta_info.name] = locate(meta_info.type.replace("/", "."))
+            if meta_info.name in self.topic_filter_list:
+                self.get_logger().info(f"Found topic {meta_info.name} of type {meta_info.type}")
         
         # filter to only the topics we want to replay
         reader.set_filter(StorageFilter(topics=list(self.topic_filter_list)))
         
         return reader
     
-    def reset_dataset(self, request, response):
-        self.get_logger().info("Resetting dataset...")
-        self.reader = self.get_bag_reader()
-        self.frames = self.get_frames_from_reader(self.reader)
-        self.frame_idx = 0
-        self.current_scene_processed = False
-        self.pub_segment_finished.publish(Bool(data=False))
-        response.success = True
-        response.message = "Dataset reset."
-        return response
-
     def frame_processed_callback(self, request, response):
         # publish next frame
         if self.frame_idx < len(self.frames):
             self.publish_next_frame()
-            # self.get_logger().info("Frame published.")
             
             response.success = True
             response.message = "Frame published."
@@ -190,28 +166,38 @@ class PlayerNode(Node):
         # get the next frame
         frame = self.frames[self.frame_idx]
         
-        # get frame info
-        msgs = frame["msgs"]
-        time = frame["time"]
-        tfs = frame["tfs"]
+        # publish static tfs and vector map
+        self.publish_static_tfs()
+        self.publish_vector_map()
         
-        # publish the static tfs
-        self.publish_static_tfs(time)
-        
-        # publish the vector map
-        self.publish_vector_map(time)
-        
-        # publish the pose tfs
-        for tf in tfs:
-            self.pose_broadcaster.sendTransform(tf.transforms)
-        
-        # publish the messages in the frame
-        for topic, msg in msgs:
-            # self.get_logger().info(f"Publishing message on topic {topic}")
-            self.publishers_[topic].publish(msg)
+        for msg in frame:
+            topic = msg["topic"]
+            message = msg["msg"]
+            
+            # if this is a tf message, publish it with current timestamp
+            if topic == "/tf":
+                for tf in message.transforms:
+                    self.publish_tf(tf)
+            
+            # for other messages, set the timestamp to now and publish
+            else:
+                message = self.set_timestamp_to_now(message, topic)
+                self.publishers_[topic].publish(message)
+            
+            # self.get_logger().info(f"Published {topic}")
         
         self.frame_idx += 1
-        
+    
+    def set_timestamp_to_now(self, msg, topic):
+        if "/simulation/entity/marker" in topic:
+            for marker in msg.markers:
+                marker.header.stamp = self.get_clock().now().to_msg()
+        elif "/simulation/entity/status" in topic:
+            for entity in msg.data:
+                entity.time = self.get_clock().now().nanoseconds
+        else:
+            msg.header.stamp = self.get_clock().now().to_msg()
+        return msg
         
     def read_dataset_segment(self, request, response):
     #     if self.tf_segment_idx >= len(self.tf_list):
@@ -227,103 +213,71 @@ class PlayerNode(Node):
         return response
     
     def get_frames_from_reader(self, reader):
-        
-        sensor_data_msgs = {}
-        tf_msgs = []
-        self.vector_map_msg = None
-        last_nanosec = None
-        frame_idx = 0
-        
-        # skip until the first tf message
+        self.get_logger().info("Getting frames from reader...")
+        # advance the reader until the first /tf message (and get the /map/vector_map message)
         while reader.has_next():
-            topic, msg, _ = reader.read_next()
-            if "vector_map" in topic:
+            topic, msg, t = reader.read_next()
+            if topic == "/map/vector_map":
                 self.vector_map_msg = deserialize_message(msg, self.typestr_to_type[topic])
-            elif "tf" in topic:
-                msg = deserialize_message(msg, self.typestr_to_type[topic])
-                tf_msgs.append((msg.transforms[0].header.stamp, topic, msg))
+                continue
+            if topic == "/tf":
                 break
         
-        # read all messages
+        msgs_dict = {
+            "topic": [],
+            "msg": [],
+            "abs_time": [],
+            "time_diff": []
+        }
+        
+        # add the first tf message to the list
+        msgs_dict["topic"].append(topic)
+        msgs_dict["msg"].append(deserialize_message(msg, self.typestr_to_type[topic]))
+        msgs_dict["abs_time"].append(t)
+        msgs_dict["time_diff"].append(0)
+        
         while reader.has_next():
-            topic, msg, _ = reader.read_next()
+            topic, msg, t = reader.read_next()
             msg = deserialize_message(msg, self.typestr_to_type[topic])
-            if "tf" in topic:
-                timestamp = msg.transforms[0].header.stamp
-                tf_msgs.append((timestamp, topic, msg))
+            msgs_dict["topic"].append(topic)
+            msgs_dict["msg"].append(msg)
             
-            elif "vector_map" in topic:
-                self.vector_map_msg = msg
-                
-            else:
-                if "marker" in topic:
-                    timestamp = msg.markers[0].header.stamp
-                else:
-                    timestamp = msg.header.stamp
-                
-                if not last_nanosec:
-                    last_nanosec = timestamp.nanosec
-                    sensor_data_msgs[frame_idx] = []
-                
-                elif timestamp.nanosec != last_nanosec:
-                    frame_idx += 1
-                    sensor_data_msgs[frame_idx] = []
-                
-                sensor_data_msgs[frame_idx].append((timestamp, topic, msg))
-                last_nanosec = timestamp.nanosec
+            # get time elapsed since last message in seconds
+            time_diff = (t - msgs_dict["abs_time"][-1]) / 1e9
+            msgs_dict["abs_time"].append(t)
+            msgs_dict["time_diff"].append(time_diff)
         
-        self.get_logger().info(f"Number of frames before filtering: {len(sensor_data_msgs)}")
+        # convert to dataframe
+        df = pd.DataFrame(msgs_dict)
         
-        # filter out all of the frames that don't contain all of the replay topics
-        filtered_frames = sensor_data_msgs.copy()
-        for frame_idx, sensor_msgs in sensor_data_msgs.items():
-            sensor_topics = {sensor_msg[1] for sensor_msg in sensor_msgs}
-            if not self.important_topics.issubset(sensor_topics):
-                del filtered_frames[frame_idx]
-        
-        self.get_logger().info(f"Number of frames after filtering: {len(filtered_frames)}")
-        
-        # reindex the frames after filtering
-        sensor_data_msgs = {i: msgs for i, (_, msgs) in enumerate(filtered_frames.items())}
-        
-        # Sort TF messages by timestamp for efficient lookup
-        tf_msgs.sort(key=lambda x: x[0].sec * 1e9 + x[0].nanosec)
-        tf_timestamps = [tf[0].sec * 1e9 + tf[0].nanosec for tf in tf_msgs]
-
+        # split the dataframe into frames where each frame ends with a /tf message and contains all the important topics
         frames = []
+        frame = []
+        important_seen = set()
+        for _, row in df.iterrows():
+            topic = row["topic"]
+            if topic in self.important_topics:
+                important_seen.add(topic)
+            
+            frame.append(row)
+            
+            if topic == "/tf":
+                if important_seen == self.important_topics:
+                    frames.append(frame)
+                    frame = []
+                    important_seen = set()
         
-        for frame_idx, sensor_msgs in sensor_data_msgs.items():
-            timestamp = sensor_msgs[0][0]
-            sensor_nanosec = timestamp.sec * 1e9 + timestamp.nanosec
-            
-            # Find the closest TFs before and after the sensor message
-            idx = bisect.bisect_left(tf_timestamps, sensor_nanosec)
-            
-            # TFs before the sensor message
-            tfs_before = [tf_msgs[i] for i in range(idx) if tf_msgs[i][0].sec * 1e9 + tf_msgs[i][0].nanosec <= sensor_nanosec]
-            
-            # TFs after the sensor message
-            tfs_after = [tf_msgs[i] for i in range(idx, len(tf_msgs)) if tf_msgs[i][0].sec * 1e9 + tf_msgs[i][0].nanosec >= sensor_nanosec]
-            
-            frame_tfs = tfs_before[-2:] + tfs_after[:2]
-            
-            # get the transforms
-            frame_tfs = [tf[2] for tf in frame_tfs]
-            
-            # skip if we don't have a tf before and after
-            if len(frame_tfs) != 4:
-                continue
-            
-            # Create the frame with the sensor message, the closest TFs before and after
-            frame = {
-                'msgs': [(sensor_msg[1], sensor_msg[2]) for sensor_msg in sensor_msgs],
-                'tfs': frame_tfs,
-                'time': timestamp,
-            }
-            frames.append(frame)
+        self.get_logger().info(f"Got {len(frames)} frames.")
         
-        self.get_logger().info(f"Vector map exists: {self.vector_map_msg != None}")
-    
+        # for debugging, create a text file with the topics in each frame, and a newline between frames
+        # with open("frames.txt", "w") as f:
+        #     for frame in frames:
+        #         for msg in frame:
+        #             f.write(msg["topic"] + "\n")
+        #         f.write("\n")
+        
+        # self.get_logger().info("Frames saved to frames.txt.")
+        
         return frames
     
     def get_sensor_tfs(self, sensor_desc_name):
@@ -373,16 +327,20 @@ class PlayerNode(Node):
         t.rotation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
         return t
     
-    def publish_static_tfs(self, time):
+    def publish_static_tfs(self):
         for tf in self.sensor_tfs.values():
-            tf.header.stamp = time
+            tf.header.stamp = self.get_clock().now().to_msg()
         self.static_tf_publisher.sendTransform(list(self.sensor_tfs.values()))
     
-    def publish_vector_map(self, time):
+    def publish_vector_map(self):
         if self.vector_map_msg:
             # self.get_logger().info("Publishing vector map...")
-            self.vector_map_msg.header.stamp = time
+            self.vector_map_msg.header.stamp = self.get_clock().now().to_msg()
             self.vector_map_publisher.publish(self.vector_map_msg)
+    
+    def publish_tf(self, tf):
+        tf.header.stamp = self.get_clock().now().to_msg()
+        self.pose_broadcaster.sendTransform(tf)
     
     def scene_processed(self):
         return self.current_scene_processed
