@@ -383,7 +383,7 @@ Visualization Manager:
       Value: false
       Visualization Type: Normal
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
+      Enabled: true
       Name: MarkerArray
       Namespaces:
         {}
