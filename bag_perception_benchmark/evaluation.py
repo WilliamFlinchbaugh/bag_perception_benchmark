@@ -310,16 +310,16 @@ for pred_objs, gt_objs in zip(pred_obj_frames, gt_obj_frames):
     precision, recall, f1, avg_precision, avg_recall = calculate_metrics(pred_objs, gt_objs)
     metrics.append((precision, recall, f1, avg_precision, avg_recall))
 
-# # print the metric summary
-# precision = sum([m[0] for m in metrics]) / len(metrics)
-# recall = sum([m[1] for m in metrics]) / len(metrics)
-# f1 = sum([m[2] for m in metrics]) / len(metrics)
-# avg_precision = sum([m[3] for m in metrics]) / len(metrics)
-# avg_recall = sum([m[4] for m in metrics]) / len(metrics)
+# print the metric summary
+precision = sum([m[0] for m in metrics]) / len(metrics)
+recall = sum([m[1] for m in metrics]) / len(metrics)
+f1 = sum([m[2] for m in metrics]) / len(metrics)
+avg_precision = sum([m[3] for m in metrics]) / len(metrics)
+avg_recall = sum([m[4] for m in metrics]) / len(metrics)
 
-# print(f"Precision: {precision}")
-# print(f"Recall: {recall}")
-# print(f"F1: {f1}")
-# print(f"Average Precision: {avg_precision}")
-# print(f"Average Recall: {avg_recall}")
+print(f"Precision: {precision}")
+print(f"Recall: {recall}")
+print(f"F1: {f1}")
+print(f"Average Precision: {avg_precision}")
+print(f"Average Recall: {avg_recall}")
 
