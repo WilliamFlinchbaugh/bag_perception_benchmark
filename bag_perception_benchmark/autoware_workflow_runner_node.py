@@ -46,6 +46,15 @@ capture_topics = {
     "/tf": TFMessage,
 }
 
+msg_to_str = {
+    DetectedObjects: "autoware_perception_msgs/msg/DetectedObjects",
+    TrackedObjects: "autoware_perception_msgs/msg/TrackedObjects",
+    PredictedObjects: "autoware_perception_msgs/msg/PredictedObjects",
+    EntityStatusWithTrajectoryArray: "traffic_simulator_msgs/msg/EntityStatusWithTrajectoryArray",
+    MarkerArray: "visualization_msgs/msg/MarkerArray",
+    TFMessage: "tf2_msgs/msg/TFMessage",
+}
+
 final_topic = "/perception/object_recognition/objects"
 
 class RunnerNode(Node):
@@ -150,7 +159,8 @@ class RunnerNode(Node):
         # kill autoware
         self.kill_autoware(self.autoware_pid)
         
-        # run benchmark node
+        # run benchmark node?
+        
 
     def wait_until_autoware_subs_ready(self):
 
@@ -163,17 +173,6 @@ class RunnerNode(Node):
             self.destroy_timer(self.timer_subs_checker)
             
     def setup_output_bag(self):
-        # add topics to the output bag and setup msg2topic mapping
-        self.msg2topic = {}
-        for topic, msg_type in self.capture_topics.items():
-            metadata = TopicMetadata(
-                name=topic,
-                type=msg_type.__module__ + "/" + msg_type.__name__,
-                serialization_format="cdr")
-            self.writer.create_topic(metadata)
-            
-            self.msg2topic[msg_type] = topic
-        
         # create subscriber for each topic
         self.subscribers = {}
         qos_profile = QoSProfile(
@@ -183,13 +182,28 @@ class RunnerNode(Node):
             durability=rclpy.qos.DurabilityPolicy.VOLATILE,
             liveliness=rclpy.qos.LivelinessPolicy.AUTOMATIC
         )
-        for topic, msg_type in self.capture_topics.items():
+        
+        self.callbacks = {}
+        
+        for idx, (topic, msg_type) in enumerate(self.capture_topics.items()):
+            # create topic in bag
+            type_str = msg_to_str[msg_type]
+            topic_info = rosbag2_py._storage.TopicMetadata(
+                name=topic,
+                type=type_str,
+                serialization_format='cdr'
+            )
+            self.writer.create_topic(topic_info)
+            
+            # setup callback for each topic
+            self.callbacks[topic] = lambda msg, topic=topic: self.write_to_bag(msg, topic)
+            
+            # create subscriber            
             self.subscribers[topic] = self.create_subscription(
-                msg_type, topic, self.write_to_output_bag, qos_profile
+                msg_type, topic, self.callbacks[topic], qos_profile
             )
     
-    def write_to_output_bag(self, msg):
-        topic = self.msg2topic[type(msg)]
+    def write_to_bag(self, msg, topic):
         serialized_msg = serialize_message(msg)
         self.writer.write(topic, serialized_msg, self.get_clock().now().nanoseconds)
 
