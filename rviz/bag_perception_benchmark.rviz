@@ -283,7 +283,7 @@ Visualization Manager:
       CYCLIST:
         Alpha: 0.9990000128746033
         Color: 119; 11; 32
-      Class: autoware_perception_rviz_plugin/DetectedObjects
+      Class: autoware_perception_rviz_plugin/PredictedObjects
       Confidence Interval: 95%
       Display Acceleration: true
       Display Existence Probability: false
@@ -303,7 +303,7 @@ Visualization Manager:
       MOTORCYCLE:
         Alpha: 0.9990000128746033
         Color: 119; 11; 32
-      Name: DetectedObjects
+      Name: PredictedObjects
       Namespaces:
         {}
       Object Fill Type: skeleton
@@ -322,7 +322,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /perception/object_recognition/detection/objects
+        Value: /perception/object_recognition/objects
       UNKNOWN:
         Alpha: 0.9990000128746033
         Color: 255; 255; 255
@@ -337,7 +337,7 @@ Visualization Manager:
       CYCLIST:
         Alpha: 0.9990000128746033
         Color: 119; 11; 32
-      Class: autoware_perception_rviz_plugin/DetectedObjects
+      Class: autoware_perception_rviz_plugin/PredictedObjects
       Confidence Interval: 95%
       Display Acceleration: true
       Display Existence Probability: false
