@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from glob import glob
-
-from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Bool
 from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Transform
@@ -36,13 +34,11 @@ from ament_index_python.packages import get_package_share_directory
 import yaml
 import os
 import pandas as pd
+import re
 
 
 topic_filter_list = {
     "/sensing/imu/tamagawa/imu_raw",
-    # "/sensing/lidar/left/pointcloud_raw_ex",
-    # "/sensing/lidar/right/pointcloud_raw_ex",
-    "/sensing/lidar/top/pointcloud_raw_ex",
     "/sensing/vehicle_velocity_converter/twist_with_covariance",
     "/sensing/imu/imu_data",
     "/map/vector_map",
@@ -53,19 +49,9 @@ topic_filter_list = {
 
 replay_topic_list = {x for x in topic_filter_list if "tf" not in x and "vector_map" not in x}
 
-import_topic_list = {
-    # "/sensing/lidar/left/pointcloud_raw_ex",
-    # "/sensing/lidar/right/pointcloud_raw_ex",
-    "/sensing/lidar/top/pointcloud_raw_ex",
-}
-
 class PlayerNode(Node):
     def __init__(self):
         super().__init__("bag_player_node")
-        
-        self.topic_filter_list = topic_filter_list
-        self.replay_topic_list = replay_topic_list
-        self.important_topics = import_topic_list
         
         # get the ros bag file path
         self.declare_parameter("bag_file", "")
@@ -73,8 +59,24 @@ class PlayerNode(Node):
         
         # get the sensor model name
         self.declare_parameter("sensor_model", "")
-        sensor_desc_pkg = self.get_parameter("sensor_model").get_parameter_value().string_value + "_description"
+        sensor_kit_name = self.get_parameter("sensor_model").get_parameter_value().string_value
+        sensor_launch_pkg = sensor_kit_name + "_launch"
+        self.important_topics = self.get_lidar_topics_from_sensor_kit(sensor_launch_pkg)
+        sensor_desc_pkg = sensor_kit_name + "_description"
         self.sensor_tfs = self.get_sensor_tfs(sensor_desc_pkg)
+        
+        # get if we should only use the top lidar sensor
+        self.declare_parameter("top_lidar_only", False)
+        self.top_lidar_only = self.get_parameter("top_lidar_only").get_parameter_value().bool_value
+        if self.top_lidar_only:
+            self.important_topics = {"/sensing/lidar/top/pointcloud_before_sync"}
+            self.get_logger().info("Only using top lidar sensor, topics: /sensing/lidar/top/pointcloud_before_sync")
+        
+        self.topic_filter_list = topic_filter_list
+        self.replay_topic_list = replay_topic_list
+        
+        self.topic_filter_list.update(self.important_topics)
+        self.replay_topic_list.update(self.important_topics)
         
         # read the bag file to get the topics
         self.reader = self.get_bag_reader()
@@ -194,20 +196,12 @@ class PlayerNode(Node):
                 marker.header.stamp = self.get_clock().now().to_msg()
         elif "/simulation/entity/status" in topic:
             for entity in msg.data:
-                entity.time = self.get_clock().now().nanoseconds
+                entity.time = float(self.get_clock().now().nanoseconds)
         else:
             msg.header.stamp = self.get_clock().now().to_msg()
         return msg
         
     def read_dataset_segment(self, request, response):
-    #     if self.tf_segment_idx >= len(self.tf_list):
-    #         self.get_logger().info("All Waymo segments in the given path have been processed.")
-    #         exit()
-
-    #     self.get_logger().info("Waymo segment decoding from dataset...")
-    #     self.dataset = WaymoDataset(self.tf_list[self.tf_segment_idx])
-    #     self.get_logger().info("Waymo segment decoded")
-    #     self.tf_segment_idx += 1
         response.success = True
         response.message = "Segment read"
         return response
@@ -279,6 +273,26 @@ class PlayerNode(Node):
         # self.get_logger().info("Frames saved to frames.txt.")
         
         return frames
+    
+    def get_lidar_topics_from_sensor_kit(self, sensor_launch_pkg):
+        # get the path to the pointcloud_preprocessor python file
+        sensor_launch_path = get_package_share_directory(sensor_launch_pkg)
+        pc_preprocessor_path = os.path.join(sensor_launch_path, "launch", "pointcloud_preprocessor.launch.py")
+        
+        pointcloud_topic_pattern = "/sensing/lidar/[a-z]+/pointcloud_before_sync"
+        
+        # capture the lidar topics from the pointcloud_preprocessor launch file
+        lidar_topics = set()
+        with open(pc_preprocessor_path, "r") as f:
+            for line in f:
+                matches = re.findall(pointcloud_topic_pattern, line)
+                for match in matches:
+                    lidar_topics.add(match)
+        
+        self.get_logger().info(f"Found {len(lidar_topics)} lidar topics for sensor kit {sensor_launch_pkg}.")
+        self.get_logger().info(', '.join(lidar_topics))
+        
+        return lidar_topics
     
     def get_sensor_tfs(self, sensor_desc_name):
         # get the paths to the sensor model yaml files
