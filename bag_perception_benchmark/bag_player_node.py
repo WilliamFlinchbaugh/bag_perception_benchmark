@@ -69,8 +69,8 @@ class PlayerNode(Node):
         self.declare_parameter("top_lidar_only", False)
         self.top_lidar_only = self.get_parameter("top_lidar_only").get_parameter_value().bool_value
         if self.top_lidar_only:
-            self.important_topics = {"/sensing/lidar/top/pointcloud_before_sync"}
-            self.get_logger().info("Only using top lidar sensor, topics: /sensing/lidar/top/pointcloud_before_sync")
+            self.important_topics = {"/sensing/lidar/top/pointcloud_raw_ex"}
+            self.get_logger().info("Only using top lidar sensor, topics: /sensing/lidar/top/pointcloud_raw_ex")
         
         self.topic_filter_list = topic_filter_list
         self.replay_topic_list = replay_topic_list
@@ -288,6 +288,9 @@ class PlayerNode(Node):
                 matches = re.findall(pointcloud_topic_pattern, line)
                 for match in matches:
                     lidar_topics.add(match)
+
+        # replace "pointcloud_before_sync" with "pointcloud_raw_ex"
+        lidar_topics = {topic.replace("pointcloud_before_sync", "pointcloud_raw_ex") for topic in lidar_topics}
         
         self.get_logger().info(f"Found {len(lidar_topics)} lidar topics for sensor kit {sensor_launch_pkg}.")
         self.get_logger().info(', '.join(lidar_topics))
