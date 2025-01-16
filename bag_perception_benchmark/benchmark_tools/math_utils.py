@@ -18,6 +18,40 @@ from typing import Optional
 from typing import Tuple
 from geometry_msgs.msg import TransformStamped, Transform
 import numpy as np
+from scipy.spatial.transform import Rotation as R
+from shapely.geometry import Polygon
+
+def get_2d_polygon(bbox):
+    # Compute the 4 corners of the bounding box in 2D (ignoring z)
+    dx, dy = bbox.dimensions.x / 2, bbox.dimensions.y / 2
+    corners = np.array([
+        [-dx, -dy],
+        [-dx, dy],
+        [dx, dy],
+        [dx, -dy]
+    ])
+    
+    # Apply rotation
+    yaw_rotation = R.from_euler('z', bbox.yaw).as_matrix()[:2, :2]  # Extract 2D rotation
+    rotated_corners = np.dot(corners, yaw_rotation.T)
+    
+    # Translate to the bbox center
+    translated_corners = rotated_corners + np.array([bbox.center.x, bbox.center.y])
+    
+    return Polygon(translated_corners), translated_corners
+
+def calculate_iou_2d(bbox1, bbox2):
+    # Get the 2D polygons and corner points for both bounding boxes
+    polygon1, _ = get_2d_polygon(bbox1)
+    polygon2, _ = get_2d_polygon(bbox2)
+    
+    # Compute the intersection and union areas
+    intersection_area = polygon1.intersection(polygon2).area
+    union_area = polygon1.union(polygon2).area
+    
+    # Compute IoU
+    iou = intersection_area / union_area if union_area > 0 else 0
+    return iou
 
 
 def is_rotation_matrix(R):
