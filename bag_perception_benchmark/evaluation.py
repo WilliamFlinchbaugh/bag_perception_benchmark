@@ -45,33 +45,6 @@ predicted_objects_msgs = []
 gt_objects_msgs = []
 car_positions = []
 objects_seen = set()
-first_distances = []
-while reader.has_next():
-    (topic, msg, t) = reader.read_next()
-    msg = deserialize_message(msg, typestr_to_type[topic])
-    if topic == gt_topic:
-        gt_objects_msgs.append(msg)
-    
-    elif topic == "/tf":
-        # save the current position of the base link for later use
-        for transform in msg.transforms:
-            if transform.header.frame_id == "map" and transform.child_frame_id == "base_link":
-                car_positions.append(transform.transform.translation)
-    
-    elif topic == predicted_objs_topic:
-        # only consider messages with objects detected
-        if len(msg.objects) == 0:
-            continue
-        # get uuid as string and add to the set of objects seen
-        uuid_str = "".join([f"{b:02x}" for b in msg.objects[0].object_id.uuid])
-        objects_seen.add(uuid_str)
-        
-        # append the message to the list
-        # also keep track of the index of the last gt message and the car's last position for later matching
-        predicted_objects_msgs.append((msg, len(gt_objects_msgs)-1, car_positions[-1]))
-        break
-
-# after we get the first predicted objects message, read the rest of the messages
 while reader.has_next():
     (topic, msg, t) = reader.read_next()
     msg = deserialize_message(msg, typestr_to_type[topic])
@@ -88,7 +61,6 @@ while reader.has_next():
         for obj in msg.objects:
             uuid_str = "".join([f"{b:02x}" for b in obj.object_id.uuid])
             if uuid_str not in objects_seen:
-                first_distances.append(np.linalg.norm([car_positions[-1].x - obj.kinematics.initial_pose_with_covariance.pose.position.x, car_positions[-1].y - obj.kinematics.initial_pose_with_covariance.pose.position.y]))
                 objects_seen.add(uuid_str)
         
         # append the message to the list

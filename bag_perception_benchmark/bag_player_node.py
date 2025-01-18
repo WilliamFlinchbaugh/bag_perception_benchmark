@@ -279,7 +279,7 @@ class PlayerNode(Node):
         sensor_launch_path = get_package_share_directory(sensor_launch_pkg)
         pc_preprocessor_path = os.path.join(sensor_launch_path, "launch", "pointcloud_preprocessor.launch.py")
         
-        pointcloud_topic_pattern = "/sensing/lidar/[a-z]+/pointcloud_before_sync"
+        pointcloud_topic_pattern = "/sensing/lidar/[a-z0-9]+/pointcloud_before_sync"
         
         # capture the lidar topics from the pointcloud_preprocessor launch file
         lidar_topics = set()
