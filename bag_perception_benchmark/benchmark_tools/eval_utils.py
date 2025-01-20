@@ -44,6 +44,7 @@ class DetectionObject:
         self.pose = None
         self.gt = False
         self.pred = False
+        self.obj_id = None
     
     def __str__(self):
         return f"{self.class_name} {self.class_conf:.2f} {self.exist_conf:.2f} {self.bbox.center.x:.2f} {self.bbox.center.y:.2f} {self.bbox.dimensions.x:.2f} {self.bbox.dimensions.y:.2f}"
@@ -56,6 +57,7 @@ class DetectionObject:
         self.pose = gt_obj.status.pose
         self.bbox = self.gt_bbox(gt_obj.status.bounding_box, self.pose)
         self.gt = True
+        self.obj_name = gt_obj.name
         return self
     
     def init_with_pred(self, pred_obj):
@@ -109,103 +111,111 @@ class DetectionObject:
         )
 
 def match_objects(pred_objs, gt_objs):
-    # match the predicted objects with the ground truth objects
-    # also return the unmatched ground truth objects
-    
-    pred_matches = {pred_obj: None for pred_obj in pred_objs}
-    gt_taken = {gt_obj: False for gt_obj in gt_objs}
-    
-    # for each pair of pred_obj and gt_obj, calculate the IoU
+    # for each pair of pred_obj and gt_obj, calculate the IoU and store the best match
+    # ensure that each gt_obj is only matched once
+    matches = []
+    unmatched_gt = gt_objs.copy()
     for pred_obj in pred_objs:
-        for gt_obj in gt_objs:
+        best_iou = 0
+        best_match = None
+        for gt_obj in unmatched_gt:
             iou = calculate_iou_2d(pred_obj.bbox, gt_obj.bbox)
-            if pred_matches[pred_obj] is None or iou > pred_matches[pred_obj][1] and not gt_taken[gt_obj]:
-                pred_matches[pred_obj] = (gt_obj, iou)
-                gt_taken[gt_obj] = True
-    
-    # return the matches and the unmatched ground truth objects
-    matches = [(pred_obj, gt_obj, iou) for pred_obj, (gt_obj, iou) in pred_matches.items() if gt_obj is not None]
-    unmatched_gt = [gt_obj for gt_obj, taken in gt_taken.items() if not taken]
-    
+            if iou > best_iou:
+                best_iou = iou
+                best_match = gt_obj
+        if best_match:
+            matches.append((pred_obj, best_match, best_iou))
+            unmatched_gt.remove(best_match)
+            
     return matches, unmatched_gt
     
 
-def get_confusion_matrix(pred_objs, gt_objs, ego_pos, det_range, iou_threshold=0.2):
-    """Find the confusion matrix for a set of predicted objects and ground truth objects
-
-    Args:
-        pred_objs (List[DetectionObj]): List of predicted objects
-        gt_objs (List[DetectionObj]): List of ground truth objects
-        ego_pos (Point): Ego vehicle position
-        det_range (float): Detection range, objects within this range are considered detectable and if not detected are false negatives
-        iou_threshold (float, optional): IoU threshold for a match. Defaults to 0.2.
-
-    Returns:
-        Tuple[List[DetectionObj], List[DetectionObj], List[DetectionObj], float]: Tuple of true positives, false positives, false negatives, and average IoU
-    """
-    matches, unmatched_gt = match_objects(pred_objs, gt_objs)
+def calculate_metrics(frames, gt_objs, det_range, iou_threshold=0.2):
+    # Calculate the recall, precision, f1, and AP for each object in the ground truth
     
-    # calculate tp, fp, fn
-    tp = []
-    fp = []
-    fn = []
+    # remove ego from the ground truth objects
+    gt_objs = [gt_obj for gt_obj in gt_objs if gt_obj.class_id != 0]
     
-    # check if each match is a tp or fp
-    for pred_obj, gt_obj, iou in matches:
-        if iou > iou_threshold:
-            tp.append(pred_obj)
-        else:
-            fp.append(pred_obj)
-
-    # check if each unmatched gt object is a fn (if within detection range)
-    for gt_obj in unmatched_gt:
-        if np.linalg.norm([ego_pos.x - gt_obj.bbox.center.x, ego_pos.y - gt_obj.bbox.center.y]) < det_range:
-            fn.append(gt_obj)
+    # create a confusion matrix for each ground truth object
+    confusion_mats = {gt_obj: {"TP": 0, "FP": 0, "FN": 0} for gt_obj in gt_objs}
+    for pred_objs, ego_pos in frames:
+        # match the objects
+        matches, unmatched_gt = match_objects(pred_objs, gt_objs)
+        
+        # first address the unmatched ground truth objects
+        # if the object is within the detection range, it is a false negative
+        # otherwise, it is a true negative and should be ignored
+        for gt_obj in unmatched_gt:
+            if np.linalg.norm([gt_obj.bbox.center.x - ego_pos.x, gt_obj.bbox.center.y - ego_pos.y]) < det_range:
+                confusion_mats[gt_obj]["FN"] += 1
+        
+        # now address the matched objects
+        for pred_obj, gt_obj, iou in matches:
+            if iou > iou_threshold:
+                confusion_mats[gt_obj]["TP"] += 1
+            else:
+                confusion_mats[gt_obj]["FP"] += 1
+        
+    # calculate the precision, recall, and f1 for each object
+    metrics = {x: {"precision": 0, "recall": 0, "f1": 0, "pr_auc": 0} for x in gt_objs}
+    for gt_obj in gt_objs:
+        TP = confusion_mats[gt_obj]["TP"]
+        FP = confusion_mats[gt_obj]["FP"]
+        FN = confusion_mats[gt_obj]["FN"]
+        if TP + FP > 0:
+            metrics[gt_obj]["precision"] = TP / (TP + FP)
+        if TP + FN > 0:
+            metrics[gt_obj]["recall"] = TP / (TP + FN)
+        if metrics[gt_obj]["precision"] + metrics[gt_obj]["recall"] > 0:
+            metrics[gt_obj]["f1"] = 2 * (metrics[gt_obj]["precision"] * metrics[gt_obj]["recall"]) / (metrics[gt_obj]["precision"] + metrics[gt_obj]["recall"])
     
-    avg_iou = sum([iou for _, _, iou in matches]) / len(matches) if len(matches) > 0 else 0
+    # calculate AP for each object
+    pr_curves = calculate_pr_curve(frames, gt_objs, det_range, iou_threshold)
+    for gt_obj in gt_objs:
+        precision = pr_curves[gt_obj]["precision"]
+        recall = pr_curves[gt_obj]["recall"]
+        metrics[gt_obj]["ap"] = auc(recall, precision)
+    
+    return metrics
 
-    return tp, fp, fn, avg_iou
+def calculate_pr_curve(frames, gt_objs, det_range, iou_threshold=0.2):
+    # Calculate the precision recall curve for each ground truth object so that we can calculate the AUC for each object
+    pr_curves = {gt_obj: {"precision": [], "recall": []} for gt_obj in gt_objs}
+    
+    for pred_objs, ego_pos in frames:
+        # match the objects
+        matches, unmatched_gt = match_objects(pred_objs, gt_objs)
+        
+        # first address the unmatched ground truth objects
+        # if the object is within the detection range, it is a false negative
+        # otherwise, it is a true negative and should be ignored
+        for gt_obj in unmatched_gt:
+            if np.linalg.norm([gt_obj.bbox.center.x - ego_pos.x, gt_obj.bbox.center.y - ego_pos.y]) < det_range:
+                pr_curves[gt_obj]["recall"].append(0)
+                pr_curves[gt_obj]["precision"].append(0)
+        
+        # now address the matched objects
+        for pred_obj, gt_obj, iou in matches:
+            if iou > iou_threshold:
+                pr_curves[gt_obj]["recall"].append(1)
+                pr_curves[gt_obj]["precision"].append(1)
+            else:
+                pr_curves[gt_obj]["recall"].append(0)
+                pr_curves[gt_obj]["precision"].append(1)
+    
+    # calculate the precision recall curve for each object
+    for gt_obj in gt_objs:
+        precision, recall, _ = precision_recall_curve(pr_curves[gt_obj]["recall"], pr_curves[gt_obj]["precision"])
+        pr_curves[gt_obj]["precision"] = precision
+        pr_curves[gt_obj]["recall"] = recall
+    
+    return pr_curves
 
-
-def calculate_metrics(frames, det_range, iou_threshold=0.2):
-    # calculate the precision, recall, f1, and ap for a set of frames
-    tp_list = []
-    fp_list = []
-    fn_list = []
-    avg_ious = []
-    conf_scores = []
-    true_labels = []
-
-    for frame in frames:
-        pred_objs, gt_objs, ego_pos = frame
-
-        tp, fp, fn, avg_iou = get_confusion_matrix(pred_objs, gt_objs, ego_pos, det_range, iou_threshold)
-        tp_list.extend(tp)
-        fp_list.extend(fp)
-        fn_list.extend(fn)
-        avg_ious.append(avg_iou)
-
-        for obj in tp:
-            conf_scores.append(obj.exist_conf)
-            true_labels.append(1)
-        for obj in fp:
-            conf_scores.append(obj.exist_conf)
-            true_labels.append(0)
-        for obj in fn:
-            conf_scores.append(0)
-            true_labels.append(1)
-
-    precision = len(tp_list) / (len(tp_list) + len(fp_list)) if (len(tp_list) + len(fp_list)) > 0 else 0
-    recall = len(tp_list) / (len(tp_list) + len(fn_list)) if (len(tp_list) + len(fn_list)) > 0 else 0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-
-    precision_curve, recall_curve, _ = precision_recall_curve(true_labels, conf_scores)
-    ap = auc(recall_curve, precision_curve)
-
-    return {
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'ap': ap,
-        'avg_iou': sum(avg_ious) / len(avg_ious) if len(avg_ious) > 0 else 0
-    }
+def metrics_summary(metrics):
+    for obj, m in metrics.items():
+        print(f"{obj.obj_name}:")
+        print(f"  Precision: {m['precision']:.2f}")
+        print(f"  Recall: {m['recall']:.2f}")
+        print(f"  F1: {m['f1']:.2f}")
+        print(f"  AP: {m['ap']:.2f}")
+        print()
