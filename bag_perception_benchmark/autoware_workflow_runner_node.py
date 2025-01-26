@@ -55,7 +55,8 @@ msg_to_str = {
     TFMessage: "tf2_msgs/msg/TFMessage",
 }
 
-final_topic = "/perception/object_recognition/objects"
+# topic that will trigger to request the next frame
+final_topic = "/perception/object_recognition/detection/objects"
 
 class RunnerNode(Node):
     def __init__(self):
@@ -112,7 +113,7 @@ class RunnerNode(Node):
             liveliness=rclpy.qos.LivelinessPolicy.AUTOMATIC
         )
         self.sub_final_topic = self.create_subscription(
-            self.capture_topics[self.final_topic], self.final_topic, self.final_topic_callback, qos_profile
+            DetectedObjects, self.final_topic, self.final_topic_callback, qos_profile
         )
         
         self.read_dataset_request()

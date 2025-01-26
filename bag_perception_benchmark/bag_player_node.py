@@ -167,13 +167,21 @@ class PlayerNode(Node):
         # get the next frame
         frame = self.frames[self.frame_idx]
         
-        # publish static tfs and vector map
-        self.publish_static_tfs()
+        # publish vector map
         self.publish_vector_map()
         
-        # after publishing tfs, wait 0.01 seconds
+        # get the tf message just before the pointcloud message
+        latest_tf = None
+        for msg in frame:
+            if msg["topic"] == "/tf":
+                latest_tf = msg["msg"]
+            
+            if msg["topic"] in self.important_topics:
+                break
         
         for msg in frame:
+            self.publish_static_tfs()
+            
             topic = msg["topic"]
             message = msg["msg"]
             
@@ -181,10 +189,14 @@ class PlayerNode(Node):
             if topic == "/tf":
                 for tf in message.transforms:
                     self.publish_tf(tf)
-                time.sleep(0.01)
             
             # for other messages, set the timestamp to now and publish
             else:
+                # if this is a lidar message, publish the latesttf before it
+                if topic in self.important_topics:
+                    for tf in latest_tf.transforms:
+                        self.publish_tf(tf)
+                        
                 message = self.set_timestamp_to_now(message, topic)
                 self.publishers_[topic].publish(message)
             
