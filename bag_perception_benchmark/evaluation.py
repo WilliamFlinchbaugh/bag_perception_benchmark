@@ -6,7 +6,7 @@ from rclpy.serialization import deserialize_message
 from pydoc import locate
 import argparse
 import numpy as np
-from benchmark_tools.eval_utils import DetectionObject, calculate_metrics, metrics_summary
+from benchmark_tools.eval_utils import DetectionObject, calculate_metrics, metrics_summary, create_animation
 import pandas as pd
 import os
 
@@ -87,22 +87,33 @@ for pred_objs, car_pos in predicted_objects_msgs:
 # convert the ground truth objects to DetectionObject objects
 gt_objects = [DetectionObject().init_with_gt(gt_obj) for gt_obj in gt_objects_msg.data]
 
-# get metrics
-metrics = calculate_metrics(frames, gt_objects, detection_range, iou_threshold=0.2)
-metrics_summary(metrics)
+# objects to ignore when calculating metrics
+ignore_objects = ["Pedestrian1", "Van0"]
+
+# get metrics for the frames
+results_df = calculate_metrics(frames, gt_objects, detection_range)
+
+# print the metrics
+metrics_summary(results_df)
 
 # record the metrics in a pandas dataframe
 # if the file does not exist, create it
 # otherwise, append to it
 if not os.path.exists(output_df_path):
-    df = pd.DataFrame(columns=["run_id", "obj_name", "precision", "recall", "f1", "ap"])
+    df = pd.DataFrame(columns=["run_id"] + list(results_df.columns))
 else:
     df = pd.read_csv(output_df_path)
 
-# add the metrics to the dataframe
-for gt_obj, metric in metrics.items():
-    record = {'run_id': run_id, 'obj_name': gt_obj.obj_name, 'precision': metric["precision"], 'recall': metric["recall"], 'f1': metric["f1"], 'ap': metric["ap"]}
-    df = pd.concat([df, pd.DataFrame.from_records([record])])
+# add the run_id column to the results dataframe
+results_df["run_id"] = run_id
+
+# concat the new metrics to the dataframe
+df = pd.concat([df, results_df])
 
 # write the dataframe to the output file
 df.to_csv(output_df_path, index=False)
+
+print(f"Metrics written to {output_df_path}")
+
+# print("Creating animation...")
+# create_animation(frames, gt_objects)

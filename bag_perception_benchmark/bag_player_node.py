@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from glob import glob
 from std_msgs.msg import Bool
 from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import Vector3
-from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray
 from .benchmark_tools.math_utils import compose_transforms
 import rclpy
 from rclpy.node import Node
@@ -35,6 +33,7 @@ import yaml
 import os
 import pandas as pd
 import re
+import time
 
 
 topic_filter_list = {
@@ -172,6 +171,8 @@ class PlayerNode(Node):
         self.publish_static_tfs()
         self.publish_vector_map()
         
+        # after publishing tfs, wait 0.01 seconds
+        
         for msg in frame:
             topic = msg["topic"]
             message = msg["msg"]
@@ -180,6 +181,7 @@ class PlayerNode(Node):
             if topic == "/tf":
                 for tf in message.transforms:
                     self.publish_tf(tf)
+                time.sleep(0.01)
             
             # for other messages, set the timestamp to now and publish
             else:
