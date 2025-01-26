@@ -298,7 +298,7 @@ Visualization Manager:
       Display Yaw Covariance: false
       Display Yaw Rate: false
       Display Yaw Rate Covariance: false
-      Enabled: true
+      Enabled: false
       Line Width: 0.029999999329447746
       MOTORCYCLE:
         Alpha: 0.9990000128746033
@@ -352,7 +352,7 @@ Visualization Manager:
       Display Yaw Covariance: false
       Display Yaw Rate: false
       Display Yaw Rate Covariance: false
-      Enabled: false
+      Enabled: true
       Line Width: 0.029999999329447746
       MOTORCYCLE:
         Alpha: 0.9990000128746033

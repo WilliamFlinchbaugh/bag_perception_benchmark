@@ -9,7 +9,9 @@ import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.animation import FuncAnimation
 from matplotlib import animation
+from tf2_geometry_msgs import do_transform_pose
 matplotlib.use('Agg')
+
 
 def get_2d_polygon(bbox):
     # Compute the 4 corners of the bounding box in 2D (ignoring z)
@@ -97,7 +99,7 @@ class DetectionObject:
         self.obj_name = gt_obj.name
         return self
     
-    def init_with_pred(self, pred_obj):
+    def init_with_pred(self, pred_obj, base_link_tf):
         # get highest confidence class
         cls_w_conf = [(c.label, c.probability) for c in pred_obj.classification]
         cls_w_conf.sort(key=lambda x: x[1], reverse=True)
@@ -106,7 +108,7 @@ class DetectionObject:
         self.class_name = classes[self.class_id]
         self.class_conf = cls_w_conf[0][1]
         self.exist_conf = pred_obj.existence_probability
-        self.pose = pred_obj.kinematics.initial_pose_with_covariance.pose
+        self.pose = do_transform_pose(pred_obj.kinematics.pose_with_covariance.pose, base_link_tf)
         if pred_obj.shape.type == 0:
             self.bbox = self.create_bbox(pred_obj.shape, self.pose)
         elif pred_obj.shape.type == 2:

@@ -1,6 +1,3 @@
-from autoware_perception_msgs.msg import PredictedObjects, PredictedObject, PredictedObjectKinematics, ObjectClassification, Shape
-from traffic_simulator_msgs.msg import EntityStatusWithTrajectoryArray, EntityStatus, BoundingBox
-from geometry_msgs.msg import Point, Vector3
 from rosbag2_py import SequentialReader, StorageOptions, ConverterOptions, StorageFilter
 from rclpy.serialization import deserialize_message
 from pydoc import locate
@@ -20,8 +17,8 @@ bag_file = args.bag_file
 run_id = args.run_id
 output_df_path = args.output_df
 
-# topic to read from for the predicted objects
-predicted_objs_topic = "/perception/object_recognition/objects"
+# topic to read from for the detected objects
+detected_objs_topic = "/perception/object_recognition/detection/objects"
 
 # topic to read from for the ground truth objects
 gt_topic = "/simulation/entity/status"
@@ -33,7 +30,7 @@ converter_options = ConverterOptions(input_serialization_format="cdr", output_se
 reader.open(storage_options, converter_options)
 
 # filter to only read the topics we care about
-filter = StorageFilter(topics=[predicted_objs_topic, gt_topic, "/tf"])
+filter = StorageFilter(topics=[detected_objs_topic, gt_topic, "/tf"])
 reader.set_filter(filter)
 
 # get the bag metadata
@@ -59,14 +56,9 @@ while reader.has_next():
         # save the current position of the base link for later use
         for transform in msg.transforms:
             if transform.header.frame_id == "map" and transform.child_frame_id == "base_link":
-                car_positions.append(transform.transform.translation)
+                car_positions.append(transform)
     
-    elif topic == predicted_objs_topic:
-        for obj in msg.objects:
-            uuid_str = "".join([f"{b:02x}" for b in obj.object_id.uuid])
-            if uuid_str not in objects_seen:
-                objects_seen.add(uuid_str)
-        
+    elif topic == detected_objs_topic:
         # append the message to the list
         # also keep track of the index of the car's last position for matching
         predicted_objects_msgs.append((msg, car_positions[-1]))
@@ -79,10 +71,10 @@ detection_range = 20
 gt_objects = set()
 frames = []
 for pred_objs, car_pos in predicted_objects_msgs:
-    pred_objs = [DetectionObject().init_with_pred(pred_obj) for pred_obj in pred_objs.objects]
+    pred_objs = [DetectionObject().init_with_pred(pred_obj, car_pos) for pred_obj in pred_objs.objects]
     
     # store pred_objs for frame, and gt_objs for frame, and the ego vehicle's position
-    frames.append((pred_objs, car_pos))
+    frames.append((pred_objs, car_pos.transform.translation))
 
 # convert the ground truth objects to DetectionObject objects
 gt_objects = [DetectionObject().init_with_gt(gt_obj) for gt_obj in gt_objects_msg.data]
@@ -115,5 +107,5 @@ df.to_csv(output_df_path, index=False)
 
 print(f"Metrics written to {output_df_path}")
 
-# print("Creating animation...")
-# create_animation(frames, gt_objects)
+print("Creating animation...")
+create_animation(frames, gt_objects)
