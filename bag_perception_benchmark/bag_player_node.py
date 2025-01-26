@@ -67,9 +67,9 @@ class PlayerNode(Node):
         # get if we should only use the top lidar sensor
         self.declare_parameter("top_lidar_only", False)
         self.top_lidar_only = self.get_parameter("top_lidar_only").get_parameter_value().bool_value
-        if self.top_lidar_only:
-            self.important_topics = {"/sensing/lidar/top/pointcloud_raw_ex"}
-            self.get_logger().info("Only using top lidar sensor, topics: /sensing/lidar/top/pointcloud_raw_ex")
+        # if self.top_lidar_only:
+            # self.important_topics = {"/sensing/lidar/top/pointcloud_raw_ex"}
+            # self.get_logger().info("Only using top lidar sensor, topics: /sensing/lidar/top/pointcloud_raw_ex")
         
         self.topic_filter_list = topic_filter_list
         self.replay_topic_list = replay_topic_list
@@ -277,14 +277,22 @@ class PlayerNode(Node):
         
         self.get_logger().info(f"Got {len(frames)} frames.")
         
-        # for debugging, create a text file with the topics in each frame, and a newline between frames
-        # with open("frames.txt", "w") as f:
-        #     for frame in frames:
-        #         for msg in frame:
-        #             f.write(msg["topic"] + "\n")
-        #         f.write("\n")
-        
-        # self.get_logger().info("Frames saved to frames.txt.")
+        # if top lidar only, replace the other lidar messages with the top lidar message
+        if self.top_lidar_only:
+            top_lidar_topic = "/sensing/lidar/top/pointcloud_raw_ex"
+            for frame in frames:
+                # get the top lidar message
+                top_lidar_msg = None
+                for msg in frame:
+                    if msg["topic"] == top_lidar_topic:
+                        top_lidar_msg = msg
+                        break
+                
+                # replace the other lidar messages with the top lidar message
+                for msg in frame:
+                    if "lidar" in msg["topic"] and msg["topic"] != top_lidar_topic:
+                        msg["topic"] = top_lidar_topic
+                        msg["msg"] = top_lidar_msg["msg"]
         
         return frames
     
