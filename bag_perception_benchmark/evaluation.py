@@ -85,9 +85,6 @@ for bag in bags:
     # convert the ground truth objects to DetectionObject objects
     gt_objects = [DetectionObject().init_with_gt(gt_obj) for gt_obj in gt_objects_msg.data]
 
-    # objects to ignore when calculating metrics
-    ignore_objects = ["Pedestrian1", "Van0"]
-
     # get metrics for the frames
     results_df = calculate_metrics(frames, gt_objects, detection_range)
 

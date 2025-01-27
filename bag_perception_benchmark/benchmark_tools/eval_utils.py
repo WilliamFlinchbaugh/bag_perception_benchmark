@@ -193,15 +193,15 @@ def calculate_metrics(frames, gt_objs, det_range, ignore_objects=[]):
             df = pd.concat([df, pd.DataFrame({
                 "class": class_name,
                 "iou_threshold": iou_threshold,
-                "precision": metrics["precision"],
-                "recall": metrics["recall"],
-                "f1": metrics["f1"]
+                "tp": [metrics["TP"]],
+                "fp": [metrics["FP"]],
+                "fn": [metrics["FN"]]
             }, index=[0])])
     
     return df
 
 def calculate_metrics_for_iou(frames, gt_objs, det_range, iou_threshold=0.2, ignore_objects=[]):
-    # Calculate the recall, precision, f1, and for each class in the ground truth
+    # Calculate the tp, fp, and fn for each class at the given IoU threshold
     
     # remove ego from the ground truth objects
     gt_objs = [gt_obj for gt_obj in gt_objs if gt_obj.class_id != 0]
@@ -237,26 +237,12 @@ def calculate_metrics_for_iou(frames, gt_objs, det_range, iou_threshold=0.2, ign
             # otherwise, it is a false positive
             else:
                 confusion_mats[gt_obj.class_name]["FP"] += 1
-        
-    # calculate the precision, recall, and f1 for each object
-    metrics = {class_name: {"precision": 0, "recall": 0, "f1": 0} for class_name in gt_classes}
-    for cls_name in gt_classes:
-        TP = confusion_mats[cls_name]["TP"]
-        FP = confusion_mats[cls_name]["FP"]
-        FN = confusion_mats[cls_name]["FN"]
-        if TP + FP > 0:
-            metrics[cls_name]["precision"] = TP / (TP + FP)
-        if TP + FN > 0:
-            metrics[cls_name]["recall"] = TP / (TP + FN)
-        if metrics[cls_name]["precision"] + metrics[cls_name]["recall"] > 0:
-            metrics[cls_name]["f1"] = 2 * (metrics[cls_name]["precision"] * metrics[cls_name]["recall"]) / (metrics[cls_name]["precision"] + metrics[cls_name]["recall"])
-    
-    return metrics
+    return confusion_mats
 
 
 def metrics_summary(metrics_df):
     # print the metrics
-    print(metrics_df.groupby(["class", "iou_threshold"]).mean())
+    print(metrics_df.groupby(["class", "iou_threshold"]).sum())
 
 def create_animation(frames, gt_objs, path):
     # given the frames and the ground truth objects, create an animation of the frames
