@@ -258,7 +258,7 @@ def metrics_summary(metrics_df):
     # print the metrics
     print(metrics_df.groupby(["class", "iou_threshold"]).mean())
 
-def create_animation(frames, gt_objs):
+def create_animation(frames, gt_objs, path):
     # given the frames and the ground truth objects, create an animation of the frames
     # just plot the bounding boxes of each object in each frame
     def plot_polygon(ax, polygon, edgecolor='blue', linestyle='-', label=None):
@@ -309,5 +309,5 @@ def create_animation(frames, gt_objs):
     )
 
     writervideo = animation.FFMpegWriter(fps=2)
-    ani.save("animation.mp4", writer=writervideo)
+    ani.save(path, writer=writervideo)
     plt.close()

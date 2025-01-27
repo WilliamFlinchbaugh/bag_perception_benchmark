@@ -10,8 +10,10 @@ import os
 # parse the arguments
 argparser = argparse.ArgumentParser()
 argparser.add_argument("--bag_dir", type=str, required=True)
+argparser.add_argument("--generate_animation", action="store_true")
 args = argparser.parse_args()
 bag_dir = args.bag_dir
+generate_animation = args.generate_animation
 output_df_path = os.path.join(bag_dir, "metrics.csv")
 
 # topic to read from for the detected objects
@@ -112,3 +114,9 @@ for bag in bags:
     df.to_csv(output_df_path, index=False)
 
     print(f"Metrics written to {output_df_path} for run {run_id}")
+    
+    # generate animation if specified
+    if generate_animation:
+        print(f"Generating animation for run {run_id}")
+        animation_path = os.path.join(bag_dir, f"{run_id}.mp4")
+        create_animation(frames, gt_objects, animation_path)
