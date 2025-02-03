@@ -115,11 +115,7 @@ noattack_pc = pc2.read_points(noattack_pc_msg, field_names=("x", "y", "z"), skip
 noattack_pc_np = np.array([[point[0], point[1], point[2]] for point in noattack_pc], dtype=np.float32)
 noattack_pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(noattack_pc_np))
 
-# visualize the pointclouds by saving the depth images
-
-
-
-
+# create a callback function that saves the depth image
 def anim_callback_attack(vis):
     ctr = vis.get_view_control()
     ctr.set_zoom(zoom)
@@ -144,6 +140,8 @@ def anim_callback_noattack(vis):
     # create image from depth buffer
     plt.imsave("noattack_depth.png", np.asarray(depth))
     return False
+
+# visualize the pointclouds
 
 key_to_callback = {
     ord("A"): anim_callback_noattack,
