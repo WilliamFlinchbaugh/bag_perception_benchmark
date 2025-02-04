@@ -193,6 +193,7 @@ def calculate_metrics(frames, gt_objs, det_range, ignore_objects=[]):
             df = pd.concat([df, pd.DataFrame({
                 "class": class_name,
                 "iou_threshold": iou_threshold,
+                "avg_conf": metrics["avg_conf"],
                 "tp": [metrics["TP"]],
                 "fp": [metrics["FP"]],
                 "fn": [metrics["FN"]]
@@ -209,6 +210,7 @@ def calculate_metrics_for_iou(frames, gt_objs, det_range, iou_threshold=0.2, ign
     # create a confusion matrix for each class
     gt_classes = set([gt_obj.class_name for gt_obj in gt_objs])
     confusion_mats = {class_name: {"TP": 0, "FP": 0, "FN": 0} for class_name in gt_classes if class_name}
+    confidences = {class_name: [] for class_name in gt_classes if class_name}
     for pred_objs, ego_pos in frames:
         # match the objects
         matches, unmatched_gt, unmatched_pred = match_objects(pred_objs, gt_objs)
@@ -234,11 +236,19 @@ def calculate_metrics_for_iou(frames, gt_objs, det_range, iou_threshold=0.2, ign
             # if the IoU is above the threshold, it is a true positive
             if iou > iou_threshold:
                 confusion_mats[gt_obj.class_name]["TP"] += 1
+                confidences[gt_obj.class_name].append(pred_obj.exist_conf)
             # otherwise, it is a false positive
             else:
                 confusion_mats[gt_obj.class_name]["FP"] += 1
+    
+    # add the average confidence for each class
+    for class_name, confs in confidences.items():
+        if len(confs) > 0:
+            confusion_mats[class_name]["avg_conf"] = np.mean(confs)
+        else:
+            confusion_mats[class_name]["avg_conf"] = 0
+    
     return confusion_mats
-
 
 def metrics_summary(metrics_df):
     # print the metrics
