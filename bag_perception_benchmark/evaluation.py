@@ -51,7 +51,6 @@ for bag in bags:
     predicted_objects_msgs = []
     gt_objects_msg = None
     car_positions = []
-    objects_seen = set()
     while reader.has_next():
         (topic, msg, t) = reader.read_next()
         msg = deserialize_message(msg, typestr_to_type[topic])

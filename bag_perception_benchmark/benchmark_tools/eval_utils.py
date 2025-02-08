@@ -133,7 +133,7 @@ class DetectionObject:
         poly = rotate(poly, yaw, origin=(pose.position.x, pose.position.y))
         
         # rotate by 90 degrees to match the orientation of the bounding box
-        poly = rotate(poly, 90, origin=(pose.position.x, pose.position.y))
+        # poly = rotate(poly, 90, origin=(pose.position.x, pose.position.y))
         
         return poly
     
