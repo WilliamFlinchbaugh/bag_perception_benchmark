@@ -2,17 +2,14 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
+from tf2_geometry_msgs import do_transform_pose
+import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib import animation
-from tf2_geometry_msgs import do_transform_pose, TransformStamped
-from geometry_msgs.msg import Vector3, Quaternion
-from quaternion import quaternion, as_rotation_matrix
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from benchmark_tools.iou import IoU
-from benchmark_tools.box import Box
 from tqdm import tqdm
-# matplotlib.use('Agg')
+from shapely.geometry import Polygon
+from shapely.affinity import rotate
+from benchmark_tools.math_utils import euler_from_quaternion
 
 
 classes = {
@@ -33,29 +30,61 @@ entitytype_to_class = {
     3: 0
 }
 
+def create_bounding_box_for_gt(line_list):
+    points = [(point.x, point.y, point.z) for point in line_list]
+
+    # remove the duplicate points
+    points_arr = []
+    for point in points:
+        if not points_arr:
+            points_arr.append(point)
+            continue
+        if point not in points_arr:
+            points_arr.append(point)
+    points_arr_2d = np.array(points_arr)[:4, :2]
+    box = Polygon(points_arr_2d)
+    return box
+
 def create_bounding_box_for_box(dimensions, pos, orientation):
-    position = np.array([pos.x, pos.y, pos.z])
-    rot_mat = as_rotation_matrix(quaternion(orientation.w, orientation.x, orientation.y, orientation.z))
-    scale = np.array([dimensions.x, dimensions.y, dimensions.z])
+    # create box
+    dx, dy = dimensions.x / 2, dimensions.y / 2
+    corners = np.array([
+        [-dx, -dy],
+        [-dx, dy],
+        [dx, dy],
+        [dx, -dy]
+    ])
     
-    return Box().from_transformation(rot_mat, position, scale)
+    # rotate by yaw
+    _, _, yaw = euler_from_quaternion(orientation.x, orientation.y, orientation.z, orientation.w)
+    yaw_rot_mat = R.from_euler('z', yaw).as_matrix()[:2, :2]
+    rotated_corners = np.dot(corners, yaw_rot_mat.T)
+    
+    # translate
+    position = np.array([pos.x, pos.y])
+    translated_corners = rotated_corners + position
+    
+    return Polygon(translated_corners)
 
-def create_bounding_box_for_polygon(footprint, height, pos, orientation):
-    position = np.array([pos.x, pos.y, pos.z])
-    rot_mat = as_rotation_matrix(quaternion(orientation.w, orientation.x, orientation.y, orientation.z))
+def create_bounding_box_for_polygon(footprint, pos, orientation):
+    # get the max x and y values and make a box
+    footprint = np.array([[point.x, point.y] for point in footprint])
+    translation = np.array([pos.x, pos.y])
+    polygon_points = footprint + translation
+    poly = Polygon(polygon_points)
     
-    # calculate bounds of the footprint for x and y dims
-    footprint = np.array([[point.x, point.y, point.z] for point in footprint.points])
-    min_x, max_x = np.min(footprint[:, 0]), np.max(footprint[:, 0])
-    min_y, max_y = np.min(footprint[:, 1]), np.max(footprint[:, 1])
+    # rotate by yaw
+    yaw = euler_from_quaternion(orientation.x, orientation.y, orientation.z, orientation.w)[2]
+    poly = rotate(poly, yaw, origin=(pos.x, pos.y))
+    poly = rotate(poly, 90, origin=(pos.x, pos.y))
     
-    scale = np.array([max_x-min_x, max_y-min_y, height])
-    
-    return Box().from_transformation(rot_mat, position, scale)
+    return poly
 
-def calc_3d_iou(box1, box2):
-    iou = IoU(box1, box2)
-    return iou.iou()
+def calc_iou(box1, box2):
+    intersection = box1.intersection(box2).area
+    union = box1.union(box2).area
+    iou = intersection / union if union > 0 else 0
+    return iou
 
 class DetectionObject:
     def __init__(self):
@@ -69,28 +98,24 @@ class DetectionObject:
         self.gt = False
         self.pred = False
         self.obj_name = None
+        self.pos = None
     
     def __str__(self):
         return f"{self.class_name} {self.class_conf:.2f} {self.exist_conf:.2f} {self.bbox.center.x:.2f} {self.bbox.center.y:.2f} {self.bbox.dimensions.x:.2f} {self.bbox.dimensions.y:.2f}"
     
-    def init_with_gt(self, gt_obj):
-        self.class_id = entitytype_to_class[gt_obj.status.type.type]
-        self.gt_class = self.class_id
+    def init_with_gt(self, marker):
+        if "Pedestrian" in marker.ns:
+            self.class_id = 7
+        elif "Taxi" in marker.ns:
+            self.class_id = 1
+        
         self.class_name = classes[self.class_id]
         self.class_conf = 1.0
         self.exist_conf = 1.0
-        self.pose = gt_obj.status.pose
-        
-        pos = self.pose.position
-        bbox = gt_obj.status.bounding_box
-        pos.x += bbox.center.x / 2
-        pos.y += bbox.center.y / 2
-        pos.z += bbox.center.z / 1.2
-        self.pos = np.array([pos.x, pos.y, pos.z])
-        self.bbox = create_bounding_box_for_box(bbox.dimensions, pos, self.pose.orientation)
-        
+        self.bbox = create_bounding_box_for_gt(marker.points)
+        self.pos = np.array([self.bbox.centroid.x, self.bbox.centroid.y])
         self.gt = True
-        self.obj_name = gt_obj.name
+        self.obj_name = marker.ns
         return self
     
     def init_with_pred(self, pred_obj, base_link_tf):
@@ -103,13 +128,13 @@ class DetectionObject:
         self.class_conf = cls_w_conf[0][1]
         self.exist_conf = pred_obj.existence_probability
         self.pose = do_transform_pose(pred_obj.kinematics.pose_with_covariance.pose, base_link_tf)
-        self.pos = np.array([self.pose.position.x, self.pose.position.y, self.pose.position.z])
         if pred_obj.shape.type == 0:
             self.bbox = create_bounding_box_for_box(pred_obj.shape.dimensions, self.pose.position, self.pose.orientation)
         elif pred_obj.shape.type == 2:
-            self.bbox = create_bounding_box_for_polygon(pred_obj.shape.footprint, pred_obj.shape.dimensions.z, self.pose.position, self.pose.orientation)
+            self.bbox = create_bounding_box_for_polygon(pred_obj.shape.footprint.points, self.pose.position, self.pose.orientation)
         else:
             raise ValueError("Unsupported shape type")
+        self.pos = np.array([self.bbox.centroid.x, self.bbox.centroid.y])
         self.pred = True
         return self
 
@@ -123,7 +148,7 @@ def match_objects(pred_objs, gt_objs):
         best_iou = 0
         best_match = None
         for gt_obj in unmatched_gt:
-            iou = calc_3d_iou(pred_obj.bbox, gt_obj.bbox)
+            iou = calc_iou(pred_obj.bbox, gt_obj.bbox)
             if iou > best_iou:
                 best_iou = iou
                 best_match = gt_obj
@@ -221,39 +246,56 @@ def metrics_summary(metrics_df):
     # print the metrics
     print(metrics_df.groupby(["class", "iou_threshold"]).sum())
 
-def plot_bounding_box(bbox, ax=None, color='b', label=None):
-    """
-    Plots a 3D bounding box using matplotlib.
+def create_animation(frames, gt_objs, path):
+    # given the frames and the ground truth objects, create an animation of the frames
+    # just plot the bounding boxes of each object in each frame
+    def plot_polygon(ax, polygon, edgecolor='blue', linestyle='-', label=None):
+        """Helper function to plot a shapely Polygon."""
+        x, y = polygon.exterior.xy
+        ax.plot(x, y, color=edgecolor, linestyle=linestyle, label=label)
 
-    Args:
-        bbox: A numpy array of shape (8, 3) representing the vertices of the bounding box.
-        ax: A matplotlib 3D axes object. If None, a new figure and axes will be created.
-        color: The color of the bounding box edges.
-        label: A label for the bounding box (for legend).
+    def animate(i, frames, gt_objs, ax):
+        """Update function for FuncAnimation."""
+        ax.clear()
+        ax.set_title(f"Frame {i + 1}")
+        ax.set_aspect('equal', adjustable='datalim')
+        ax.grid(True)
+        
+        # Draw the ground truth bounding boxes (stationary, constant for all frames)
+        for gt in gt_objs:
+            if gt.obj_name == "ego":
+                continue
+            gt_polygon = gt.bbox
+            plot_polygon(ax, gt_polygon, edgecolor='green', linestyle='--', label="Ground Truth")
+        
+        # Draw the detected bounding boxes for the current frame
+        detections, ego_pos = frames[i]
+        for detection in detections:
+            detection_polygon = detection.bbox
+            plot_polygon(ax, detection_polygon, edgecolor='blue', linestyle='-', label="Detection")
+        
+        # Draw a circle at the ego position
+        ego_circle = plt.Circle((ego_pos.x, ego_pos.y), 1, color='red', fill=False, label="Ego Position")
+        ax.add_artist(ego_circle)
+        
+        # Add legend
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
 
-    Returns:
-        The matplotlib 3D axes object.
-    """
-    bbox = bbox.vertices
-    if ax is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Define edges of the bounding box (indices of the vertices)
-    edges = [
-        [1, 5], [2, 6], [3, 7], [4, 8],  # lines along x-axis
-        [1, 3], [5, 7], [2, 4], [6, 8],  # lines along y-axis
-        [1, 2], [3, 4], [5, 6], [7, 8]   # lines along z-axis
-    ]
+    # Initialize the animation
+    ani = FuncAnimation(
+        fig,
+        animate,
+        frames=len(frames),
+        fargs=(frames, gt_objs, ax),
+        interval=500,  # Interval between frames in milliseconds
+        repeat=True
+    )
 
-    # Plot the edges
-    for edge in edges:
-        ax.plot(bbox[edge, 0], bbox[edge, 1], bbox[edge, 2], color=color)
-
-    # If a label is provided, add it to the plot (for legend)
-    if label:
-        # Get the center of the bounding box for the label position
-        center = np.mean(bbox, axis=0)
-        ax.text(center[0], center[1], center[2], label, color=color)
-
-    return ax
+    writervideo = animation.FFMpegWriter(fps=2)
+    ani.save(path, writer=writervideo)
+    plt.close()
