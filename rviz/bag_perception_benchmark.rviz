@@ -337,7 +337,7 @@ Visualization Manager:
       CYCLIST:
         Alpha: 0.9990000128746033
         Color: 119; 11; 32
-      Class: autoware_perception_rviz_plugin/PredictedObjects
+      Class: autoware_perception_rviz_plugin/DetectedObjects
       Confidence Interval: 95%
       Display Acceleration: true
       Display Existence Probability: false

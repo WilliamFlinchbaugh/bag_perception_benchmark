@@ -3,18 +3,16 @@ from rclpy.serialization import deserialize_message
 from pydoc import locate
 import argparse
 import numpy as np
-from benchmark_tools.eval_utils import DetectionObject, calculate_metrics, metrics_summary, create_animation
+from benchmark_tools.eval_utils import DetectionObject, calculate_metrics, metrics_summary
 import pandas as pd
 import os
 
 # parse the arguments
 argparser = argparse.ArgumentParser()
 argparser.add_argument("--bag_dir", type=str, required=True)
-argparser.add_argument("--generate_animation", action="store_true")
 args = argparser.parse_args()
 bag_dir = args.bag_dir
-generate_animation = args.generate_animation
-output_df_path = os.path.join(bag_dir, "metrics.csv")
+output_df_path = os.path.join(bag_dir, "metrics_.csv")
 
 # topic to read from for the detected objects
 detected_objs_topic = "/perception/object_recognition/detection/objects"
@@ -75,11 +73,12 @@ for bag in bags:
     # convert the messages to DetectionObject objects and create frames for the predicted objects
     gt_objects = set()
     frames = []
-    for pred_objs, car_pos in predicted_objects_msgs:
-        pred_objs = [DetectionObject().init_with_pred(pred_obj, car_pos) for pred_obj in pred_objs.objects]
+    for pred_objs, car_tf in predicted_objects_msgs:
+        # take avg between car_positions[car_idx-1] and car_positions[car_idx] poses and use that as transform
+        pred_objs = [DetectionObject().init_with_pred(pred_obj, car_tf) for pred_obj in pred_objs.objects]
         
         # store pred_objs for frame, and gt_objs for frame, and the ego vehicle's position
-        frames.append((pred_objs, car_pos.transform.translation))
+        frames.append((pred_objs, car_tf.transform.translation))
 
     # convert the ground truth objects to DetectionObject objects
     gt_objects = [DetectionObject().init_with_gt(gt_obj) for gt_obj in gt_objects_msg.data]
@@ -110,9 +109,3 @@ for bag in bags:
     df.to_csv(output_df_path, index=False)
 
     print(f"Metrics written to {output_df_path} for run {run_id}")
-    
-    # generate animation if specified
-    if generate_animation:
-        print(f"Generating animation for run {run_id}")
-        animation_path = os.path.join(bag_dir, f"{run_id}.mp4")
-        create_animation(frames, gt_objects, animation_path)
